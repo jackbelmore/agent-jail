@@ -1,0 +1,384 @@
+#!/usr/bin/env bash
+# agent-jail -- run an AI coding agent confined to the current directory.
+#
+# Filesystem: bubblewrap. The agent can write the current directory and its own
+# private state, read /usr and a handful of /etc files, and see nothing else of
+# $HOME. Network: pasta in a separate network namespace plus an nftables egress
+# filter, so the agent reaches the public internet but not the host's localhost
+# services, abstract sockets (X11), the LAN or a tailnet.
+#
+# What this does and does not protect: docs/THREAT_MODEL.md
+
+# Profiles and helpers are called indirectly via "profile_$name".
+# shellcheck disable=SC2329
+set -euo pipefail
+
+readonly VERSION=0.1.0
+readonly DNS_ADDR=169.254.1.1     # address pasta answers DNS on, inside the jail
+prog=${0##*/}
+
+die()  { printf '%s: %s\n' "$prog" "$*" >&2; exit 1; }
+warn() { printf '%s: warning: %s\n' "$prog" "$*" >&2; }
+
+usage() {
+    cat <<EOF
+Usage: $prog [options] PROFILE [ARGS...]
+
+Run PROFILE's agent so it can write only the current directory and its own
+private state, read nothing else in \$HOME, and reach the public internet but
+not localhost, the LAN or other sockets on this machine.
+
+Profiles: opencode, qwen, continue, shell
+
+Options:
+  --net MODE        isolated  public internet only, via pasta (default)
+                    none      no network at all
+                    host      share the host network (UNSAFE: localhost
+                              services and X11 become reachable)
+  --host-port PORT  with --net isolated, forward 127.0.0.1:PORT inside the
+                    jail to 127.0.0.1:PORT on the host, e.g. 11434 for a local
+                    Ollama (repeatable)
+  --git MODE        protect   .git/hooks and .git/config read-only (default)
+                    ro        all of .git read-only (no commits inside)
+                    off       no extra git protection
+  --ro PATH         also expose PATH read-only (repeatable)
+  --shell           start bash inside PROFILE's sandbox instead of the agent,
+                    to see exactly what the agent would see
+  --force           run in a directory that is normally refused
+  --dry-run         print the sandbox command instead of running it
+  -h, --help        show this help
+  --version         print the version
+
+Agent state lives in \${AGENT_JAIL_HOME:-\${XDG_DATA_HOME:-~/.local/share}/agent-jail}/PROFILE,
+never in the agent's normal config directories.
+EOF
+}
+
+# --- helpers ----------------------------------------------------------------
+
+# Resolve a command on the host PATH to its real file.
+resolve() {
+    local p
+    p=$(command -v -- "$1" 2>/dev/null) || return 1
+    readlink -f -- "$p"
+}
+
+# Walk up from a file inside an npm package to the package root, so the whole
+# package (and its bundled native binaries) is exposed, read-only.
+pkg_root() {
+    local d=${1%/*} parent
+    while [[ $d == /*/* ]]; do
+        parent=${d%/*}
+        if [[ ${parent##*/} == node_modules ]] ||
+           [[ ${parent##*/} == @* && ${parent%/*} == */node_modules ]]; then
+            printf '%s\n' "$d"
+            return 0
+        fi
+        d=$parent
+    done
+    return 1
+}
+
+# Print why a working directory is refused, or nothing if it is fine.
+refuse_reason() {
+    local w=$1 d
+    [[ $HOME/ == "$w"/* ]] && { echo "it contains your home directory"; return; }
+    [[ $w == /*/* ]] || { echo "it is a top-level directory"; return; }
+    mountpoint -q -- "$w" 2>/dev/null && { echo "it is the root of a mounted filesystem"; return; }
+    for d in .ssh .gnupg .config .local .cache .pki .password-store .mozilla \
+             .aws .kube .docker .var .claude .codex .gemini; do
+        if [[ $w == "$HOME/$d" || $w == "$HOME/$d"/* ]]; then
+            echo "it is inside ~/$d"
+            return
+        fi
+    done
+}
+
+# Every .git entry (directory, or pointer file in a worktree/submodule) under
+# the working directory, skipping dependency trees.
+find_git() {
+    find "$1" -maxdepth 6 \
+        \( -name node_modules -o -name .venv -o -name venv -o -name target \) -prune \
+        -o -name .git -print 2>/dev/null | LC_ALL=C sort
+}
+
+# --- profiles ---------------------------------------------------------------
+# A profile sets:
+#   cmd          the command to run (absolute paths)
+#   ro_paths     host paths exposed read-only at the same path (program files)
+#   state        paths relative to $HOME the agent may write; backed by
+#                agent-jail's own state directory, never the real ones
+#   imports      paths relative to $HOME bound read-only from the real $HOME on
+#                top of state, so you keep one config but the agent can't edit it
+#   env          extra NAME=VALUE pairs
+#   block_hosts  hostnames that resolve to 0.0.0.0 inside the jail
+
+profile_opencode() {
+    local bin
+    bin=$(resolve opencode) || die "opencode not found in PATH (npm i -g opencode-ai)"
+    cmd=("$bin")
+    ro_paths=("$(pkg_root "$bin" || echo "$bin")")
+    state=(.config/opencode .local/share/opencode .cache/opencode .local/state/opencode)
+    imports=(.config/opencode/opencode.json .config/opencode/opencode.jsonc)
+    env=(OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1)
+}
+
+profile_qwen() {
+    local bin node
+    bin=$(resolve qwen) || die "qwen not found in PATH (npm i -g @qwen-code/qwen-code)"
+    node=$(resolve node) || die "node not found in PATH"
+    cmd=("$node" "$bin")
+    ro_paths=("$(pkg_root "$bin" || echo "$bin")" "$node")
+    state=(.qwen)
+    imports=()
+    env=()
+    # Qwen Code's usage-statistics (RUM) endpoint.
+    block_hosts=(gb4w8c3ygj-default-sea.rum.aliyuncs.com)
+    # Start with usage statistics off; never write through a planted symlink.
+    local s="$state_dir/.qwen/settings.json"
+    if [[ ! -e $s && ! -L $s ]]; then
+        mkdir -p -- "${s%/*}"
+        (set -C; printf '{ "privacy": { "usageStatisticsEnabled": false } }\n' >"$s")
+    fi
+}
+
+profile_continue() {
+    local bin node
+    bin=$(resolve cn) || die "cn not found in PATH (npm i -g @continuedev/cli)"
+    node=$(resolve node) || die "node not found in PATH"
+    cmd=("$node" "$bin")
+    ro_paths=("$(pkg_root "$bin" || echo "$bin")" "$node")
+    state=(.continue)
+    imports=(.continue/config.yaml)
+    env=()
+}
+
+profile_shell() {
+    cmd=(/usr/bin/bash)
+    ro_paths=()
+    state=()
+    imports=()
+    env=()
+}
+
+# --- arguments --------------------------------------------------------------
+
+net=isolated git_mode=protect force=0 dry_run=0 inspect=0
+host_ports=() extra_ro=()
+while (($#)); do
+    case $1 in
+        --net)        net=${2:?--net needs a mode}; shift 2 ;;
+        --net=*)      net=${1#*=}; shift ;;
+        --host-port)  host_ports+=("${2:?--host-port needs a port}"); shift 2 ;;
+        --host-port=*) host_ports+=("${1#*=}"); shift ;;
+        --git)        git_mode=${2:?--git needs a mode}; shift 2 ;;
+        --git=*)      git_mode=${1#*=}; shift ;;
+        --ro)         extra_ro+=("${2:?--ro needs a path}"); shift 2 ;;
+        --ro=*)       extra_ro+=("${1#*=}"); shift ;;
+        --force)      force=1; shift ;;
+        --shell)      inspect=1; shift ;;
+        --dry-run)    dry_run=1; shift ;;
+        -h|--help)    usage; exit 0 ;;
+        --version)    echo "$prog $VERSION"; exit 0 ;;
+        --)           shift; break ;;
+        -*)           die "unknown option: $1 (see --help)" ;;
+        *)            break ;;
+    esac
+done
+(($#)) || { usage >&2; exit 2; }
+profile=$1; shift
+
+case $net in isolated|none|host) ;; *) die "--net must be isolated, none or host" ;; esac
+case $git_mode in protect|ro|off) ;; *) die "--git must be protect, ro or off" ;; esac
+for p in "${host_ports[@]}"; do
+    if ! [[ $p =~ ^[0-9]+$ ]] || ((p < 1 || p > 65535)); then die "bad port: $p"; fi
+done
+((${#host_ports[@]} == 0)) || [[ $net == isolated ]] || die "--host-port needs --net isolated"
+declare -F "profile_$profile" >/dev/null || die "unknown profile: $profile (see --help)"
+command -v bwrap >/dev/null || die "bubblewrap (bwrap) is not installed"
+
+work=$(pwd -P)
+reason=$(refuse_reason "$work")
+if [[ -n $reason ]]; then
+    ((force)) || die "refusing to run in $work: $reason (use --force to override)"
+    warn "running in $work although $reason"
+fi
+
+state_base=${AGENT_JAIL_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-jail}
+state_dir=$state_base/$profile
+case $state_dir/ in "$work"/*) die "the agent-jail state directory is inside $work" ;; esac
+case $work/ in "$state_base"/*) die "refusing to run inside the agent-jail state directory" ;; esac
+
+cmd=() ro_paths=() state=() imports=() env=() block_hosts=()
+mkdir -p -- "$state_dir"
+"profile_$profile"
+((inspect)) && cmd=(/usr/bin/bash)
+
+# --- build the sandbox ------------------------------------------------------
+
+tmp=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/agent-jail.XXXXXX")
+trap 'rm -rf -- "$tmp"' EXIT
+
+{
+    printf '127.0.0.1 localhost agent-jail\n::1 localhost agent-jail\n'
+    for h in "${block_hosts[@]}"; do printf '0.0.0.0 %s\n:: %s\n' "$h" "$h"; done
+} >"$tmp/hosts"
+
+b=(
+    --ro-bind /usr /usr
+    --symlink usr/lib /lib
+    --symlink usr/lib64 /lib64
+    --symlink usr/bin /bin
+    --symlink usr/sbin /sbin
+    --ro-bind "$tmp/hosts" /etc/hosts
+)
+for f in passwd group nsswitch.conf localtime ld.so.cache pki ssl ca-certificates \
+         crypto-policies alternatives; do
+    b+=(--ro-bind-try "/etc/$f" "/etc/$f")
+done
+case $net in
+    isolated) printf 'nameserver %s\n' "$DNS_ADDR" >"$tmp/resolv.conf"
+              b+=(--ro-bind "$tmp/resolv.conf" /etc/resolv.conf) ;;
+    host)     b+=(--ro-bind-try "$(readlink -f /etc/resolv.conf)" /etc/resolv.conf) ;;
+esac
+b+=(
+    --proc /proc
+    --dev /dev
+    --tmpfs /dev/shm
+    --tmpfs /tmp
+    --tmpfs "$HOME"
+)
+for p in "${extra_ro[@]}"; do
+    p=$(readlink -e -- "$p") || die "no such path for --ro"
+    ro_paths+=("$p")
+done
+for p in "${ro_paths[@]}"; do
+    [[ -e $p ]] || die "no such path: $p"
+    b+=(--ro-bind "$p" "$p")
+done
+for rel in "${state[@]}"; do
+    mkdir -p -- "$state_dir/$rel"
+    b+=(--bind "$state_dir/$rel" "$HOME/$rel")
+done
+for rel in "${imports[@]}"; do
+    # The import lands on a mount point inside agent-writable state; a symlink
+    # planted there by an earlier run must not redirect it.
+    [[ -L $state_dir/$rel ]] && rm -f -- "$state_dir/$rel"
+    b+=(--ro-bind-try "$HOME/$rel" "$HOME/$rel")
+done
+b+=(--bind "$work" "$work")
+
+# Git runs hooks and config-defined commands (core.fsmonitor, core.hooksPath,
+# filters, pagers) on the host the next time you type `git status` there. Make
+# the parts that can do that read-only for every repository in the directory.
+git_before=$(find_git "$work")
+if [[ $git_mode != off ]]; then
+    while IFS= read -r g; do
+        [[ -n $g ]] || continue
+        if [[ -L $g ]] || [[ -d $g && ( -L $g/hooks || -L $g/config ) ]]; then
+            ((force)) || die "$g (or its hooks/config) is a symlink; inspect it or use --force"
+        fi
+        if [[ -f $g || $git_mode == ro ]]; then
+            # A pointer file must not be re-pointed at an agent-made git dir.
+            b+=(--ro-bind "$g" "$g")
+            continue
+        fi
+        mkdir -p -- "$g/hooks"
+        b+=(--ro-bind "$g/hooks" "$g/hooks")
+        for f in config config.worktree; do
+            [[ -e $g/$f ]] && b+=(--ro-bind "$g/$f" "$g/$f")
+        done
+        for m in "$g"/modules/*/ "$g"/worktrees/*/; do
+            [[ -d $m ]] || continue
+            for f in hooks config config.worktree; do
+                [[ -e $m$f ]] && b+=(--ro-bind "$m$f" "$m$f")
+            done
+        done
+    done <<<"$git_before"
+fi
+
+b+=(
+    --chdir "$work"
+    --unshare-all
+    --unshare-user
+    --disable-userns
+    --uid "$(id -u)"
+    --gid "$(id -g)"
+    --hostname agent-jail
+    --cap-drop ALL
+    --die-with-parent
+    --clearenv
+    --setenv HOME "$HOME"
+    --setenv USER "${USER:-$(id -un)}"
+    --setenv LOGNAME "${USER:-$(id -un)}"
+    --setenv PATH /usr/bin:/bin
+    --setenv TERM "${TERM:-xterm-256color}"
+    --setenv COLORTERM "${COLORTERM:-truecolor}"
+    --setenv LANG "${LANG:-C.UTF-8}"
+    --setenv TMPDIR /tmp
+    --setenv AGENT_JAIL "$profile"
+)
+for kv in "${env[@]}"; do b+=(--setenv "${kv%%=*}" "${kv#*=}"); done
+[[ $net != none ]] && b+=(--share-net)
+
+# TIOCSTI lets a process push keystrokes into its terminal, which the shell
+# would run after the jail exits. Kernels since 6.2 can turn it off; if it is
+# still on, detach the agent from the terminal instead.
+tiocsti=$(cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null || echo 1)
+if [[ $tiocsti != 0 ]]; then
+    warn "TIOCSTI is enabled on this kernel; starting a new session (window resizes may not reach the agent)"
+    b+=(--new-session)
+fi
+
+run=(bwrap "${b[@]}" -- "${cmd[@]}" "$@")
+
+if [[ $net == isolated ]]; then
+    command -v pasta >/dev/null || die "--net isolated needs pasta (passt package); or choose --net none"
+    command -v nft >/dev/null || die "--net isolated needs nft (nftables) for the egress filter"
+    ports=$(IFS=,; echo "${host_ports[*]}")
+    # Applied inside the jail's own network namespace, before bwrap starts. Only
+    # public addresses are reachable; loopback works for forwarded host ports.
+    cat >"$tmp/egress.nft" <<EOF
+table inet agent_jail {
+    chain output {
+        type filter hook output priority 0; policy accept;
+        oif "lo" accept
+        ip daddr $DNS_ADDR meta l4proto { tcp, udp } th dport 53 accept
+        meta l4proto ipv6-icmp accept
+        ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8,
+                   169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16,
+                   198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 } reject
+        ip6 daddr { ::/128, ::1/128, ::ffff:0:0/96, 64:ff9b::/96, fc00::/7,
+                    fe80::/10, ff00::/8 } reject
+    }
+}
+EOF
+    # shellcheck disable=SC2016  # $1/$@ are for the inner sh
+    run=(pasta --config-net --quiet --no-map-gw --dns-forward "$DNS_ADDR"
+         -t none -u none -T "${ports:-none}" -U none --
+         /usr/bin/sh -c 'nft -f "$1" && shift && exec "$@"' agent-jail-net
+         "$tmp/egress.nft" "${run[@]}")
+elif [[ $net == host ]]; then
+    warn "--net host: the agent can reach every localhost service and the X11 server"
+fi
+
+if ((dry_run)); then
+    printf '%q ' "${run[@]}"; echo
+    exit 0
+fi
+
+# Run (not exec) so the post-run check below still happens. Ctrl-C belongs to
+# the agent; this script just waits for it.
+trap ':' INT
+status=0
+"${run[@]}" || status=$?
+trap - INT
+
+# Anything that git would execute on the host, created during the run.
+new_git=$(LC_ALL=C comm -13 <(printf '%s\n' "$git_before") <(find_git "$work") | sed '/^$/d')
+if [[ -n $new_git ]]; then
+    warn "the agent created git metadata; its hooks and config run on the host when you use git there:"
+    while IFS= read -r g; do printf '    %s\n' "$g" >&2; done <<<"$new_git"
+    warn "inspect them first, e.g.: git -c core.hooksPath=/dev/null -c core.fsmonitor= status"
+fi
+exit "$status"
