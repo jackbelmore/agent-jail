@@ -63,6 +63,16 @@ resolve() {
     readlink -f -- "$p"
 }
 
+# Find a system tool even when sbin directories are not on PATH (Debian/Ubuntu).
+find_tool() {
+    local d
+    command -v -- "$1" 2>/dev/null && return 0
+    for d in /usr/sbin /sbin /usr/bin; do
+        [[ -x $d/$1 ]] && { echo "$d/$1"; return 0; }
+    done
+    return 1
+}
+
 # Walk up from a file inside an npm package to the package root, so the whole
 # package (and its bundled native binaries) is exposed, read-only.
 pkg_root() {
@@ -333,8 +343,8 @@ fi
 run=(bwrap "${b[@]}" -- "${cmd[@]}" "$@")
 
 if [[ $net == isolated ]]; then
-    command -v pasta >/dev/null || die "--net isolated needs pasta (passt package); or choose --net none"
-    command -v nft >/dev/null || die "--net isolated needs nft (nftables) for the egress filter"
+    pasta=$(find_tool pasta) || die "--net isolated needs pasta (passt package); or choose --net none"
+    nft=$(find_tool nft) || die "--net isolated needs nft (nftables) for the egress filter"
     ports=$(IFS=,; echo "${host_ports[*]}")
     # Applied inside the jail's own network namespace, before bwrap starts. Only
     # public addresses are reachable; loopback works for forwarded host ports.
@@ -354,10 +364,10 @@ table inet agent_jail {
 }
 EOF
     # shellcheck disable=SC2016  # $1/$@ are for the inner sh
-    run=(pasta --config-net --quiet --no-map-gw --dns-forward "$DNS_ADDR"
+    run=("$pasta" --config-net --quiet --no-map-gw --dns-forward "$DNS_ADDR"
          -t none -u none -T "${ports:-none}" -U none --
-         /usr/bin/sh -c 'nft -f "$1" && shift && exec "$@"' agent-jail-net
-         "$tmp/egress.nft" "${run[@]}")
+         /usr/bin/sh -c '"$1" -f "$2" && shift 2 && exec "$@"' agent-jail-net
+         "$nft" "$tmp/egress.nft" "${run[@]}")
 elif [[ $net == host ]]; then
     warn "--net host: the agent can reach every localhost service and the X11 server"
 fi
