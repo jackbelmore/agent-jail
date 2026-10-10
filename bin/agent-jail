@@ -10,7 +10,7 @@
 # What this does and does not protect: docs/THREAT_MODEL.md
 
 # Profiles and helpers are called indirectly via "profile_$name".
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 set -euo pipefail
 
 readonly VERSION=0.1.0
