@@ -19,6 +19,94 @@ $ agent-jail --net none qwen              # no network at all
 $ agent-jail --shell opencode             # a shell with the agent's exact view
 ```
 
+## How it works, in simple terms
+
+Think of the jail as a room that is built for the agent each time you start it.
+
+- **Only what the agent needs is in the room.** Your project folder, which it
+  can change; a private folder for its own settings and logins, which it can
+  change and which is kept between runs; and the system's programs, which it can
+  only read. Your SSH keys, browser profiles and other projects aren't behind a
+  permission check that a clever prompt could talk its way past. They simply
+  aren't in the room.
+- **The room has its own door to the internet, with a guard on it.** The agent
+  can reach model APIs and the public web, but anything addressed to your own
+  computer, your home network or your tailnet is turned away.
+- **Nothing it leaves behind runs later outside the room.** The places where a
+  file can make code run automatically later (git hooks, git config, the agent's
+  own plugin folder) are read-only or private to the jail, and you're told if it
+  creates new git metadata.
+
+Three standard Linux tools do the work; `agent-jail` is a bash script that sets
+them up together.
+
+| Tool | What it does here |
+|---|---|
+| [bubblewrap] | Builds the room: the agent's own view of the filesystem and process list, no privileges, a cleared environment |
+| [pasta] | Gives the room its own network connection, separate from your computer's |
+| nftables | The guard: a firewall inside the room that rejects private and local addresses |
+
+### What the agent can see
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 330}}}%%
+flowchart LR
+    agent(["AI agent<br/>inside the jail"])
+    agent -- "read + write" --> proj["Your project folder<br/>(the directory you started it in)"]
+    agent -- "read + write" --> state["The jail's own settings and logins<br/>(kept in ~/.local/share/agent-jail)"]
+    agent -. "read only" .-> cfg["Your real agent config file"]
+    agent -. "read only" .-> usr["System programs and libraries (/usr)"]
+    agent -- "not there at all" --x rest["Everything else in your home folder:<br/>~/.ssh, browser profiles, other projects,<br/>other agents' settings and logins"]
+    classDef ok fill:#d3f2dc,stroke:#2f8f4e,color:#123d20
+    classDef ro fill:#dde8f7,stroke:#4a6fa5,color:#1b2e4a
+    classDef no fill:#f9dcdc,stroke:#b03a3a,color:#4a1010
+    class proj,state ok
+    class cfg,usr ro
+    class rest no
+```
+
+### Where it can connect
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 330}}}%%
+flowchart TB
+    agent(["AI agent"]) --> net["Its own network connection (pasta)"]
+    agent -- "no shared sockets" --x desktop["Your desktop session:<br/>X11, Wayland, D-Bus, audio"]
+    net --> guard{{"Firewall inside the jail (nftables):<br/>where is this going?"}}
+    guard -- "a public address" --> internet(["Model APIs, package<br/>registries, the web"])
+    guard -- "a private address" --x lan["Your router, NAS, other<br/>devices, Tailscale peers"]
+    guard -- "this computer" --x local["Ollama, web UIs, databases<br/>on your machine (unless you<br/>forward one with --host-port)"]
+    classDef ok fill:#d3f2dc,stroke:#2f8f4e,color:#123d20
+    classDef no fill:#f9dcdc,stroke:#b03a3a,color:#4a1010
+    class internet ok
+    class lan,local,desktop no
+```
+
+The guard checks what *kind* of address a connection goes to; it is not a list
+of approved sites. So the agent can still send anything it can read to any
+public server. That and the other limits are listed in
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+
+### What happens when you run it
+
+```mermaid
+sequenceDiagram
+    actor You
+    participant AJ as agent-jail
+    participant N as pasta + nftables
+    participant B as bubblewrap
+    participant A as AI agent
+    You->>AJ: agent-jail opencode (in ~/Projects/my-app)
+    AJ->>AJ: Refuse unsafe places ($HOME, ~/.ssh, /)
+    AJ->>AJ: Prepare the jail's private settings folder<br/>and a minimal /etc
+    AJ->>N: Create a separate network<br/>and load the firewall rules
+    N->>B: Build the agent's view of the files,<br/>clear the environment, drop privileges
+    B->>A: Start the agent
+    A-->>You: You work with the agent as usual
+    A->>AJ: The agent exits
+    AJ->>You: Warn about any new .git folder or file it created
+```
+
 ## What the agent gets
 
 | | Inside the jail |
@@ -46,7 +134,24 @@ you later run, kernel bugs, resource exhaustion, DNS tunnelling) is listed in
 ## Why these particular defences
 
 Each one closes a hole found in earlier versions of these scripts, which used
-`bwrap --share-net` and bound the agent's real config directories:
+`bwrap --share-net` and bound the agent's real config directories.
+
+The first two holes are the same trick. A sandbox only helps if nothing the agent
+writes inside it gets run later outside it:
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 330}}}%%
+flowchart LR
+    A["Jailed agent<br/>(say, prompt-injected)"] -- "Step 1: writes a plugin or a git hook<br/>somewhere shared" --> F["~/.config/opencode/<br/>.git/hooks/"]
+    F -- "Step 2: runs later, outside the jail,<br/>via plain opencode or your next git command" --> H["Code running with<br/>all of your access"]
+    classDef no fill:#f9dcdc,stroke:#b03a3a,color:#4a1010
+    class H no
+```
+
+`agent-jail` breaks step 1: the shared places are either private to the jail or
+read-only.
+
+The four holes:
 
 1. **Persistence through the agent's own config.** The jailed agent could write
    `~/.config/opencode/`, which the *unjailed* `opencode` also reads (including its
