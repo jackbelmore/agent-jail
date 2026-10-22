@@ -39,7 +39,7 @@ jobs:
           .venv/bin/pip install -q -r requirements-dev.txt
 
       - name: ruff
-        run: .venv/bin/ruff check tests
+        run: .venv/bin/ruff check tests docs
 
       - name: Escape tests
         run: .venv/bin/pytest -v tests
