@@ -29,6 +29,28 @@ needs_pasta = pytest.mark.skipif(
     reason="--net isolated needs pasta and nft",
 )
 
+needs_node = pytest.mark.skipif(not shutil.which("node"), reason="needs node")
+
+# Stands in for npm: tries to escape the install jail, then installs a fake
+# agent whose output reports what the install could see.
+FAKE_NPM = """
+const fs = require("fs"), path = require("path"), os = require("os");
+const a = process.argv.slice(2);
+const prefix = a[a.indexOf("--prefix") + 1], pkg = a[a.length - 1];
+let seen = process.env.CANARY_TOKEN || "";
+try { seen += fs.readFileSync(path.join(os.homedir(), ".ssh/id_canary"), "utf8"); } catch {}
+for (const f of [path.join(os.homedir(), "escaped"), path.join(prefix, "..", "planted")]) {
+  try { fs.writeFileSync(f, "x"); } catch {}
+}
+const lib = path.join(prefix, "lib/node_modules", pkg, "bin");
+fs.mkdirSync(lib, { recursive: true });
+fs.writeFileSync(path.join(lib, "cli.js"),
+  `console.log("fake-agent", ${JSON.stringify(pkg)}, ${JSON.stringify(seen)})`);
+fs.mkdirSync(path.join(prefix, "bin"));
+fs.symlinkSync(`../lib/node_modules/${pkg}/bin/cli.js`,
+  path.join(prefix, "bin", pkg.split("/").pop()));
+"""
+
 
 class Jail:
     """A throwaway $HOME with a project directory to run agent-jail in."""
@@ -49,6 +71,8 @@ class Jail:
             "CANARY_TOKEN": "sk-canary-should-not-leak",
         }
         subprocess.run(["git", "init", "-q", str(self.work)], check=True)
+        if node := shutil.which("node"):
+            (self.bin / "node").symlink_to(node)
 
     def run(self, *args: str, cwd: Path | None = None, net: str = "none"):
         cmd = [str(JAIL)]
@@ -72,6 +96,15 @@ class Jail:
         exe.chmod(0o755)
         (self.bin / command).symlink_to(exe)
         return pkg
+
+    def fake_npm(self) -> None:
+        """Put FAKE_NPM on PATH as npm."""
+        npm = self.bin / "npm"
+        npm.write_text(FAKE_NPM)
+        npm.chmod(0o755)
+
+    def tools(self, agent: str) -> Path:
+        return self.home / ".local/share/agent-jail/tools" / agent
 
 
 @pytest.fixture
