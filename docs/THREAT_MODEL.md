@@ -16,7 +16,7 @@ may be compromised. Assume it actively tries to get out.
 | Secrets in your shell environment | `--clearenv`; only `HOME`, `USER`, `PATH`, `TERM`, `LANG` and profile settings are set. |
 | Other runs of the same agent outside the jail | Agent state is private to the jail (`~/.local/share/agent-jail/<profile>`). The real config file is bound read-only. |
 | Your files, while an agent is installed | `--install` and the picker run `npm install` in a jail that can write only the new package directory, with the same network filter. The installed package is read-only to the agent, and its command is refused if it leads outside the install. |
-| Your next `git` command on the host | `.git/hooks`, `.git/config`, `config.worktree`, and those of submodules and worktrees are read-only; `.git` pointer files are read-only; new `.git` entries are reported after the run; symlinked hooks/config refuse to start. |
+| Your next `git` command on the host | `.git/hooks`, `.git/config`, `config.worktree`, and those of submodules and worktrees are read-only; `.git` pointer files and `commondir` files are read-only; each `.git` directory and the directories above it are mount points, so a repository can't be moved aside and replaced by a fresh `git init`; new or replaced `.git` entries and new `commondir` files are reported after the run; symlinked hooks/config refuse to start. |
 | Services on the host's loopback (local model servers, web UIs, databases) | Separate network namespace; only ports passed with `--host-port` are forwarded. |
 | Your desktop session (X11, Wayland, D-Bus, PipeWire, systemd user manager) | `/run/user` is not mounted; abstract sockets such as X11's are unreachable from a separate network namespace. |
 | The LAN, router, tailnet, cloud metadata endpoints | nftables in the jail's namespace rejects 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 (except the DNS forwarder), 127/8, multicast, IPv6 ULA and link-local. |
@@ -35,13 +35,20 @@ Read these before trusting the jail with anything.
 2. **Secrets the hiding misses.** Files are hidden by name only. A secret in
    a file with an ordinary name, a copy committed to git history
    (`git show HEAD:.env`), or anything under `.git`, `node_modules` or a virtualenv
-   is readable. Files the agent creates during the run aren't hidden.
+   is readable. Files the agent creates during the run aren't hidden. A file is
+   hidden by mounting over it, so if a program on the host replaces it during the
+   run (an editor that saves by writing a new file and renaming it over the old
+   one, or `sed -i`), the jail sees the new, unhidden file.
 3. **What it writes.** The working directory is the agent's output. Build files,
    `package.json` scripts, test files, `.envrc` and editor task files run
    unsandboxed when *you* run them. Review the diff. Git metadata, and agent and
    editor settings that can run commands (`.claude/`, `.codex/`, `.gemini/`,
    `.qwen/`, `.opencode/`, `.continue/`, `.vscode/`, `.mcp.json`, `opencode.json`,
-   `.envrc`), are checked automatically and reported, not blocked.
+   `.envrc`), are checked automatically and reported, not blocked. A tool that
+   runs git on the host *while the agent is still running*, such as an editor's
+   git integration, can run a new repository's or `commondir`'s hooks before you
+   see the warning. An unfinished rebase the agent leaves behind can hold `exec`
+   steps that run if you continue it.
 4. **Other projects, through the agent's state.** A profile's state directory is
    shared by every project you run that agent in. An agent in one project can
    leave a plugin, hook or instruction there that the next jailed run, in a

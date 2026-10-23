@@ -292,7 +292,11 @@ The four holes:
    importing the real config read-only.
 2. **Persistence through git.** `.git/hooks/` and `.git/config` were writable.
    Fixed by binding them read-only, re-binding worktree pointer files read-only, and
-   reporting new git metadata after the run.
+   reporting new git metadata after the run. Two later ways around that are closed
+   too: moving `.git` aside and running `git init` (each `.git`, and the directories
+   above it, is now a mount point that can't be renamed), and writing
+   `.git/commondir`, which makes git take hooks and config from another directory
+   (reported after the run, and read-only when it already exists).
 3. **The X server.** With `--share-net`, the jail shares the host's network
    namespace, and abstract Unix sockets (such as Xwayland's `@/tmp/.X11-unix/X0`)
    belong to the network namespace, not the filesystem. On the machine this was

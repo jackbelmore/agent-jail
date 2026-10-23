@@ -12,6 +12,12 @@
 
 ### Fixed
 
+- An agent could get its own git hooks run on the host. It could move `.git`
+  aside and `git init` a fresh repository in its place, or write
+  `.git/commondir` to point git at a directory it made. Each `.git`, and every
+  directory between it and the project root, is now a mount point that can't be
+  renamed; existing `commondir` files are read-only, and new ones, like a
+  replaced `.git`, are reported after the run.
 - Git hooks and config were writable when the project directory itself was
   named `venv`, `target` or `node_modules`, because the search for `.git`
   skipped it as a dependency tree.

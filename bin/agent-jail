@@ -140,12 +140,17 @@ refuse_reason() {
 }
 
 # Every .git entry (directory, or pointer file in a worktree/submodule) under
-# the working directory, skipping dependency trees. -mindepth 1 keeps a
-# working directory that is itself called venv or target from being pruned.
+# the working directory, and every commondir file inside one, skipping
+# dependency trees, as "device:inode path": a .git replaced by a new one at the
+# same path is a different entry. A commondir file makes git take its config
+# and hooks from the directory it names, so it counts as a pointer file. -mindepth 1
+# keeps a working directory that is itself called venv or target from being
+# pruned.
 find_git() {
     find "$1" -mindepth 1 -maxdepth 6 \
         \( -name node_modules -o -name .venv -o -name venv -o -name target \) -prune \
-        -o -name .git -print 2>/dev/null | LC_ALL=C sort
+        -o \( -name .git -o -name commondir -path '*/.git/*' \) -printf '%D:%i %p\n' \
+        2>/dev/null | LC_ALL=C sort
 }
 
 # Checksums of the project files that agents, editors and direnv load code from
@@ -378,21 +383,35 @@ build_jail() {
         b+=(--ro-bind-try "$HOME/$rel" "$HOME/$rel")
     done
     b+=(--bind "$dir" "$dir")
-    # A secret file stays in place but becomes /dev/null on a nodev mount:
-    # opening it fails, and it can't be removed, renamed or linked.
-    for f in "${hidden[@]}"; do b+=(--ro-bind /dev/null "$f"); done
 
     # Git runs hooks and config-defined commands (core.fsmonitor, core.hooksPath,
     # filters, pagers) on the host the next time you type `git status` there. Make
     # the parts that can do that read-only for every repository in the directory.
     if [[ $git != off ]]; then
+        # First pin each .git directory, and every directory between it and the
+        # working directory, by binding it onto itself: a mount point can't be
+        # renamed, so the agent can't move a repository aside and git init a
+        # new one, with hooks of its choosing, in its place. Parents come first,
+        # so that no pin covers a mount made inside it.
+        local pins=() pin
         while IFS= read -r g; do
+            g=${g#* }
+            while [[ -n $g && $g != "$dir" ]]; do pins+=("$g"); g=${g%/*}; done
+        done <<<"$git_before"
+        if ((${#pins[@]})); then
+            while IFS= read -r -d '' pin; do
+                [[ -d $pin && ! -L $pin ]] && b+=(--bind "$pin" "$pin")
+            done < <(printf '%s\0' "${pins[@]}" | LC_ALL=C sort -zu)
+        fi
+        while IFS= read -r g; do
+            g=${g#* }
             [[ -n $g ]] || continue
             if [[ -L $g ]] || [[ -d $g && ( -L $g/hooks || -L $g/config ) ]]; then
                 ((force)) || die "$g (or its hooks/config) is a symlink; inspect it or use --force"
             fi
             if [[ -f $g || $git == ro ]]; then
-                # A pointer file must not be re-pointed at an agent-made git dir.
+                # A pointer file (.git or commondir) must not be re-pointed at
+                # an agent-made git dir.
                 b+=(--ro-bind "$g" "$g")
                 continue
             fi
@@ -409,6 +428,11 @@ build_jail() {
             done
         done <<<"$git_before"
     fi
+
+    # A secret file stays in place but becomes /dev/null on a nodev mount:
+    # opening it fails, and it can't be removed, renamed or linked. This comes
+    # after the pins above, which bind directories afresh from the host.
+    for f in "${hidden[@]}"; do b+=(--ro-bind /dev/null "$f"); done
 
     b+=(
         --chdir "$dir"
@@ -961,9 +985,10 @@ run_jail || status=$?
 ((dry_run)) && exit 0
 
 # Anything that git would execute on the host, created during the run.
-new_git=$(LC_ALL=C comm -13 <(printf '%s\n' "$git_before") <(find_git "$work") | sed '/^$/d')
+new_git=$(LC_ALL=C comm -13 <(printf '%s\n' "$git_before") <(find_git "$work") |
+          sed -e '/^$/d' -e 's/^[^ ]* //')
 if [[ -n $new_git ]]; then
-    warn "the agent created git metadata; its hooks and config run on the host when you use git there:"
+    warn "the agent created or replaced git metadata; its hooks and config run on the host when you use git there:"
     while IFS= read -r g; do printf '    %s\n' "$g" >&2; done <<<"$new_git"
     warn "inspect them first, e.g.: git -c core.hooksPath=/dev/null -c core.fsmonitor= status"
 fi
