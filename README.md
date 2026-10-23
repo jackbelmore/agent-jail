@@ -28,15 +28,23 @@ kernel instead, so it holds whatever the model is talked into doing:
 
 ```sh
 git clone https://github.com/jackbelmore/agent-jail
-install -m 755 agent-jail/bin/agent-jail ~/.local/bin/
+cd agent-jail
+./install.sh
+```
+
+`install.sh` puts the `agent-jail` command in `~/.local/bin`, adds tab completion
+for bash and fish, and then checks your system: it reports anything missing with
+the command that installs it, and starts a test jail. If `~/.local/bin` isn't on
+your `PATH`, it tells you the line to add for your shell.
+
+Then, in any project:
+
+```sh
 cd ~/Projects/my-app
 agent-jail
 ```
 
-Choose with the arrow keys and Enter, or press a number. You need Linux with
-[bubblewrap] 0.8 or newer, and for the default network mode `pasta` (package
-`passt`) and `nft` (package `nftables`). The npm-packaged agents also need Node.js
-and npm. See [Requirements](#requirements).
+Choose with the arrow keys and Enter, or press a number.
 
 Or name the agent and skip the list:
 
@@ -291,6 +299,13 @@ fails there with a permission error, allow it, for example with
 `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0` (which is what CI
 does).
 
+`agent-jail --check` checks all of this at any time, and `./install.sh` runs it
+for you.
+
+To update, `git pull` and run `./install.sh` again. To remove the command and the
+completions, run `./install.sh --uninstall`; the agents' logins and installs stay
+in `~/.local/share/agent-jail` until you delete that folder.
+
 ## Usage
 
 ```
@@ -298,6 +313,7 @@ agent-jail [options] [PROFILE [ARGS...]]
 
   (no PROFILE)               pick an agent from a list, installing it if needed
   --list                     list the agents and whether they are installed
+  --check                    check that everything agent-jail needs is installed
   --install NAME             install or update an agent's npm package, in a jail
   --net isolated|none|host   network mode (default isolated; host is unsafe)
   --host-port PORT           expose 127.0.0.1:PORT from the host (repeatable)

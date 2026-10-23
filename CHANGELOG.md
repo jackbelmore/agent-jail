@@ -13,6 +13,11 @@
 - Profiles for Claude Code (`claude`), Codex (`codex`) and Gemini CLI (`gemini`).
   Codex's own sandbox starts turned off, because it needs the user namespaces the
   jail disables.
+- `./install.sh` installs the command in `~/.local/bin` with tab completion for
+  bash and fish, says how to put it on `PATH` for your shell, and checks the
+  setup; `./install.sh --uninstall` removes it.
+- `agent-jail --check` reports missing requirements with the command that
+  installs them for your distribution, and starts a test jail.
 - After the run, a warning when the agent created or changed project files that
   agents, editors or direnv run commands from (`.claude/`, `.codex/`, `.mcp.json`,
   `.vscode/`, `.envrc`, ...).

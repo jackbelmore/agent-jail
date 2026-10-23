@@ -31,7 +31,7 @@ jobs:
           sudo modprobe nf_tables
 
       - name: shellcheck
-        run: shellcheck bin/agent-jail
+        run: shellcheck bin/agent-jail install.sh completions/agent-jail.bash
 
       - name: Install test tools
         run: |
