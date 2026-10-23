@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1198" height="288" viewBox="0 0 1198 288" role="img" aria-labelledby="t">
+<title id="t">What agent-jail can&#x27;t protect you from: code the agent writes runs with all your access when you run it later; it can upload the project&#x27;s files to the internet unless you use --allow-host; and it can delete or break the project folder, so commit to git first.</title>
+<style>text { font-family: Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif; }</style>
+<rect width="1198" height="288" rx="20" fill="#0f172a"/>
+<g transform="translate(24 24)">
+<rect width="370" height="240" rx="16" fill="#1e293b" stroke="#fbbf24" stroke-opacity=".35" stroke-width="2"/>
+<rect width="370" height="6" rx="3" fill="#fbbf24"/>
+<circle cx="46" cy="54" r="26" fill="#451a03"/>
+<g transform="translate(46 54)" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-11 11 l3 -9 l13 -13 l6 6 l-13 13 z M2 -8 l6 6"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">What it writes</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">Code the agent writes runs</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">with all your access when</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">YOU run it later. Read</text>
+<text x="22" y="208" font-size="15" fill="#cbd5e1">the changes first.</text>
+</g>
+<g transform="translate(414 24)">
+<rect width="370" height="240" rx="16" fill="#1e293b" stroke="#fbbf24" stroke-opacity=".35" stroke-width="2"/>
+<rect width="370" height="6" rx="3" fill="#fbbf24"/>
+<circle cx="46" cy="54" r="26" fill="#451a03"/>
+<g transform="translate(46 54)" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M0 10 v-20 M-7 -3 l7 -7 l7 7 M-13 13 h26"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">What it can send</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">It can upload this project&#x27;s</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">files to the internet. Add</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">--allow-host to choose</text>
+<text x="22" y="208" font-size="15" fill="#cbd5e1">where it may connect.</text>
+</g>
+<g transform="translate(804 24)">
+<rect width="370" height="240" rx="16" fill="#1e293b" stroke="#fbbf24" stroke-opacity=".35" stroke-width="2"/>
+<rect width="370" height="6" rx="3" fill="#fbbf24"/>
+<circle cx="46" cy="54" r="26" fill="#451a03"/>
+<g transform="translate(46 54)" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-12 -8 h24 M-4 -8 v-4 h8 v4 M-9 -8 l2 21 h14 l2 -21 M-2.5 -2 v10 M2.5 -2 v10"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">What it can break</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">It can delete or mess up</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">this folder. Commit to git</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">before you start, so you</text>
+<text x="22" y="208" font-size="15" fill="#cbd5e1">can undo anything.</text>
+</g>
+</svg>

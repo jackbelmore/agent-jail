@@ -9,6 +9,11 @@
   state in the jail; a project's `.agents/` folder is now watched too.
 - `agent-jail codex` says to log in with `codex login --device-auth` until Codex
   has a login: its browser login can't reach the jail.
+- A new README for people who are new to this: pictures of what the jail
+  protects and what it doesn't, a three-step start, and a simple comparison with
+  agents' own settings, Docker and virtual machines. The full reference moved to
+  [docs/GUIDE.md](docs/GUIDE.md), and the detailed comparison of other sandboxes
+  to [docs/ALTERNATIVES.md](docs/ALTERNATIVES.md).
 - An "Alternatives" section in the README comparing ai-jail, Anthropic's
   sandbox-runtime and Docker Sandboxes (plus container-use and landrun), with
   where each is the better choice.

@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1188" height="548" viewBox="0 0 1188 548" role="img" aria-labelledby="t">
+<title id="t">What agent-jail protects you from: your keys and passwords, secret files in the project, your home network, traps planted for later, your terminal, API keys in your shell, your computer&#x27;s memory, and other programs.</title>
+<style>text { font-family: Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif; }</style>
+<rect width="1188" height="548" rx="20" fill="#0f172a"/>
+<g transform="translate(24 24)">
+<rect width="270" height="240" rx="16" fill="#1e293b" stroke="#2dd4bf" stroke-opacity=".35" stroke-width="2"/>
+<rect width="270" height="6" rx="3" fill="#2dd4bf"/>
+<circle cx="46" cy="54" r="26" fill="#134e4a"/>
+<g transform="translate(46 54)" fill="none" stroke="#2dd4bf" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="-7" cy="0" r="8"/><path d="M1 0 h15 M11 0 v6 M16 0 v4"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">Keys and passwords</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">Your SSH keys, browser</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">profiles, cloud logins and</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">other projects aren&#x27;t in</text>
+<text x="22" y="208" font-size="15" fill="#cbd5e1">the jail at all.</text>
+</g>
+<g transform="translate(314 24)">
+<rect width="270" height="240" rx="16" fill="#1e293b" stroke="#f43f5e" stroke-opacity=".35" stroke-width="2"/>
+<rect width="270" height="6" rx="3" fill="#f43f5e"/>
+<circle cx="46" cy="54" r="26" fill="#4c0519"/>
+<g transform="translate(46 54)" fill="none" stroke="#f43f5e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-10 -14 h13 l8 8 v20 h-21 z M3 -14 v8 h8"/><path d="M-5 3 h10 M-5 8 h10"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">Secret files</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">.env files and private keys</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">inside your project are</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">covered up, so they can&#x27;t</text>
+<text x="22" y="208" font-size="15" fill="#cbd5e1">be opened.</text>
+</g>
+<g transform="translate(604 24)">
+<rect width="270" height="240" rx="16" fill="#1e293b" stroke="#38bdf8" stroke-opacity=".35" stroke-width="2"/>
+<rect width="270" height="6" rx="3" fill="#38bdf8"/>
+<circle cx="46" cy="54" r="26" fill="#0c4a6e"/>
+<g transform="translate(46 54)" fill="none" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-14 2 L0 -11 L14 2 M-9 -2 v14 h18 v-14"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">Your home network</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">No router, NAS, Tailscale,</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">or apps running on your</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">own computer. Only the</text>
+<text x="22" y="208" font-size="15" fill="#cbd5e1">public internet.</text>
+</g>
+<g transform="translate(894 24)">
+<rect width="270" height="240" rx="16" fill="#1e293b" stroke="#fbbf24" stroke-opacity=".35" stroke-width="2"/>
+<rect width="270" height="6" rx="3" fill="#fbbf24"/>
+<circle cx="46" cy="54" r="26" fill="#451a03"/>
+<g transform="translate(46 54)" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="-7" cy="-10" r="3.5"/><circle cx="-7" cy="11" r="3.5"/><circle cx="8" cy="-4" r="3.5"/><path d="M-7 -6.5 v14 M8 -0.5 q0 7 -13 8.5"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">Traps for later</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">Git hooks and settings</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">that would run code the</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">next time you use git are</text>
+<text x="22" y="208" font-size="15" fill="#cbd5e1">locked, or reported to you.</text>
+</g>
+<g transform="translate(24 284)">
+<rect width="270" height="240" rx="16" fill="#1e293b" stroke="#a78bfa" stroke-opacity=".35" stroke-width="2"/>
+<rect width="270" height="6" rx="3" fill="#a78bfa"/>
+<circle cx="46" cy="54" r="26" fill="#2e1065"/>
+<g transform="translate(46 54)" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="-15" y="-11" width="30" height="22" rx="4"/><path d="M-9 -4 l5 4 l-5 4 M1 5 h8"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">Your terminal</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">It can&#x27;t slip commands</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">into your shell to run</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">after the agent exits.</text>
+</g>
+<g transform="translate(314 284)">
+<rect width="270" height="240" rx="16" fill="#1e293b" stroke="#22c55e" stroke-opacity=".35" stroke-width="2"/>
+<rect width="270" height="6" rx="3" fill="#22c55e"/>
+<circle cx="46" cy="54" r="26" fill="#052e16"/>
+<g transform="translate(46 54)" fill="none" stroke="#22c55e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-12 -12 h24 v24 h-24 z M-6 -4 h12 M-6 2 h8"/><path d="M-4 9 h0" stroke-width="4"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">Keys in your shell</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">API keys and tokens in</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">your environment aren&#x27;t</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">passed in. The agent</text>
+<text x="22" y="208" font-size="15" fill="#cbd5e1">logs in on its own.</text>
+</g>
+<g transform="translate(604 284)">
+<rect width="270" height="240" rx="16" fill="#1e293b" stroke="#fb923c" stroke-opacity=".35" stroke-width="2"/>
+<rect width="270" height="6" rx="3" fill="#fb923c"/>
+<circle cx="46" cy="54" r="26" fill="#431407"/>
+<g transform="translate(46 54)" fill="none" stroke="#fb923c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-14 6 a14 14 0 0 1 28 0"/><path d="M0 6 l7 -9"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">Your computer</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">A runaway agent can&#x27;t use</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">up all your memory or</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">freeze your desktop.</text>
+</g>
+<g transform="translate(894 284)">
+<rect width="270" height="240" rx="16" fill="#1e293b" stroke="#f472b6" stroke-opacity=".35" stroke-width="2"/>
+<rect width="270" height="6" rx="3" fill="#f472b6"/>
+<circle cx="46" cy="54" r="26" fill="#500724"/>
+<g transform="translate(46 54)" fill="none" stroke="#f472b6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-15 0 q15 -14 30 0 q-15 14 -30 0 z"/><circle r="4"/></g>
+<text x="22" y="112" font-size="19" font-weight="700" fill="#f8fafc">Other programs</text>
+<text x="22" y="142" font-size="15" fill="#cbd5e1">It can&#x27;t watch or control</text>
+<text x="22" y="164" font-size="15" fill="#cbd5e1">other apps, or read your</text>
+<text x="22" y="186" font-size="15" fill="#cbd5e1">login keyring.</text>
+</g>
+</svg>

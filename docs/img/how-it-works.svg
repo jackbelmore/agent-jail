@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" role="img" aria-labelledby="t">
+  <title id="t">How it works: four layers around the agent. Limits (systemd) cap memory and processes. Network (pasta and nftables) gives it its own connection that reaches only the public internet. Files (bubblewrap) give it its own view of the disk with only your project. Kernel rules (seccomp) refuse dangerous requests to the Linux kernel.</title>
+  <defs>
+    <style>
+      text { font-family: Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif; }
+      .ring { font-size: 14px; font-weight: 800; letter-spacing: 1.5px; }
+      .h { font-size: 19px; font-weight: 700; fill: #f8fafc; }
+      .tool { font-size: 15px; font-weight: 600; }
+      .p { font-size: 15px; fill: #cbd5e1; }
+    </style>
+  </defs>
+  <rect width="1200" height="500" rx="20" fill="#0f172a"/>
+
+  <!-- layers -->
+  <rect x="30" y="30" width="560" height="440" rx="34" fill="#431407" fill-opacity=".55" stroke="#fb923c" stroke-width="3"/>
+  <text class="ring" x="58" y="62" fill="#fdba74">LIMITS</text>
+  <rect x="75" y="80" width="470" height="360" rx="30" fill="#0c4a6e" fill-opacity=".6" stroke="#38bdf8" stroke-width="3"/>
+  <text class="ring" x="101" y="111" fill="#7dd3fc">NETWORK</text>
+  <rect x="120" y="130" width="380" height="280" rx="26" fill="#134e4a" fill-opacity=".7" stroke="#2dd4bf" stroke-width="3"/>
+  <text class="ring" x="144" y="160" fill="#5eead4">FILES</text>
+  <rect x="165" y="180" width="290" height="200" rx="22" fill="#2e1065" fill-opacity=".8" stroke="#a78bfa" stroke-width="3"/>
+  <text class="ring" x="187" y="209" fill="#c4b5fd">KERNEL RULES</text>
+
+  <!-- robot and folder -->
+  <g transform="translate(262 305) scale(.82)">
+    <line x1="0" y1="-58" x2="0" y2="-44" stroke="#cbd5e1" stroke-width="4"/><circle cx="0" cy="-62" r="7" fill="#fbbf24"/>
+    <rect x="-34" y="-44" width="68" height="52" rx="14" fill="#e2e8f0"/><rect x="-24" y="-32" width="48" height="26" rx="9" fill="#0f172a"/>
+    <circle cx="-11" cy="-19" r="5" fill="#2dd4bf"/><circle cx="11" cy="-19" r="5" fill="#2dd4bf"/>
+    <rect x="-28" y="14" width="56" height="44" rx="10" fill="#a78bfa"/><circle cx="0" cy="34" r="7" fill="#ede9fe"/>
+    <line x1="-28" y1="24" x2="-44" y2="40" stroke="#a78bfa" stroke-width="8" stroke-linecap="round"/>
+    <line x1="28" y1="24" x2="44" y2="40" stroke="#a78bfa" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(372 300)">
+    <path d="M-30 -20 a5 5 0 0 1 5 -5 h18 l7 7 h25 a5 5 0 0 1 5 5 v36 a5 5 0 0 1 -5 5 h-50 a5 5 0 0 1 -5 -5 z" fill="#fbbf24"/>
+    <rect x="-30" y="-12" width="60" height="38" rx="5" fill="#fcd34d"/>
+    <text y="46" text-anchor="middle" font-size="14" font-weight="700" fill="#fde68a">my-app</text>
+  </g>
+
+  <!-- legend -->
+  <g transform="translate(630 40)">
+    <rect width="12" height="80" rx="6" fill="#a78bfa"/>
+    <text class="h" x="28" y="22">Kernel rules <tspan class="tool" fill="#c4b5fd">· seccomp</tspan></text>
+    <text class="p" x="28" y="48">Refuses requests to Linux that agents never</text>
+    <text class="p" x="28" y="70">need, like spying on other programs.</text>
+  </g>
+  <g transform="translate(630 145)">
+    <rect width="12" height="80" rx="6" fill="#2dd4bf"/>
+    <text class="h" x="28" y="22">Files <tspan class="tool" fill="#5eead4">· bubblewrap</tspan></text>
+    <text class="p" x="28" y="48">Its own view of the disk: your project, its own</text>
+    <text class="p" x="28" y="70">settings, and system programs. Nothing else.</text>
+  </g>
+  <g transform="translate(630 250)">
+    <rect width="12" height="80" rx="6" fill="#38bdf8"/>
+    <text class="h" x="28" y="22">Network <tspan class="tool" fill="#7dd3fc">· pasta + nftables</tspan></text>
+    <text class="p" x="28" y="48">Its own internet connection, with a guard that</text>
+    <text class="p" x="28" y="70">turns away your computer and home network.</text>
+  </g>
+  <g transform="translate(630 355)">
+    <rect width="12" height="80" rx="6" fill="#fb923c"/>
+    <text class="h" x="28" y="22">Limits <tspan class="tool" fill="#fdba74">· systemd</tspan></text>
+    <text class="p" x="28" y="48">A cap on memory and processes, so a runaway</text>
+    <text class="p" x="28" y="70">agent can't freeze your computer.</text>
+  </g>
+</svg>
