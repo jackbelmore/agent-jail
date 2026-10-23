@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/jackbelmore/agent-jail/actions/workflows/ci.yml/badge.svg)](https://github.com/jackbelmore/agent-jail/actions/workflows/ci.yml)
 
-**Run Claude Code, Codex, Gemini CLI and other AI coding agents so that they can
+**Run Claude Code, Codex, Antigravity CLI and other AI coding agents so that they can
 change only the folder you start them in.**
 
 <p align="center">
@@ -64,7 +64,7 @@ $ agent-jail --install claude             # install or update an agent
 |---|---|---|---|
 | Claude Code | `agent-jail claude` | `@anthropic-ai/claude-code` | `/login`, then open the link it prints and paste the code back |
 | Codex | `agent-jail codex` | `@openai/codex` | `agent-jail codex login --device-auth`, or `printenv OPENAI_API_KEY \| agent-jail codex login --with-api-key` |
-| Gemini CLI | `agent-jail gemini` | `@google/gemini-cli` | "Login with Google" prints a link and asks for the code, because the jail has no browser |
+| Antigravity CLI | `agent-jail agy` | not by agent-jail: Google's installer, `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | "Google OAuth" prints a link; sign in and paste the code back |
 | Qwen Code | `agent-jail qwen` | `@qwen-code/qwen-code` | From inside `agent-jail qwen` |
 | OpenCode | `agent-jail opencode` | `opencode-ai` | `agent-jail opencode auth login` |
 | Continue | `agent-jail continue` | `@continuedev/cli` | Through `~/.continue/config.yaml`, which the jail reads but can't change |
@@ -88,8 +88,15 @@ Per agent:
   asks for approval as its approval policy says.
 - **Claude Code**: all of its state, including `.claude.json`, is in the jail's
   `~/.claude`, and its auto-updater is off.
-- **Gemini CLI and Qwen Code** start with usage statistics and auto-update off,
-  and Qwen Code's telemetry host is blocked.
+- **Antigravity CLI** (`agy`) replaces Gemini CLI, which Google is retiring. It
+  isn't an npm package, so `agent-jail` runs the `agy` that Google's installer put
+  in `~/.local/bin`, read-only; update it with `agy update` outside the jail. Its
+  logins, settings and conversations are in the jail's `~/.gemini`, not yours, and
+  a project's `.agents/` folder (hooks, MCP servers, plugins) is watched. Its own
+  terminal sandbox needs user namespaces and stays off. Not yet tried in the jail:
+  its browser tool, which starts a bundled Chrome.
+- **Qwen Code** starts with usage statistics and auto-update off, and its
+  telemetry host is blocked.
 - **OpenCode** reads your `~/.config/opencode/opencode.json` but can't change it;
   auto-update and session sharing are off.
 - **Crush** reads your `~/.config/crush/crush.json` and `crushrc` but can't
@@ -480,7 +487,7 @@ Set `AGENT_JAIL_HOME` to keep the jail's state somewhere other than
 trust.
 
 Adding an agent is a line in `AGENTS` and a short shell function: see
-`profile_gemini` in [bin/agent-jail](bin/agent-jail).
+`profile_qwen` in [bin/agent-jail](bin/agent-jail).
 
 ## Tests
 

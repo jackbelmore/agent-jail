@@ -19,9 +19,9 @@
 <text x="196.4" y="162" class="cdim">○ not installed</text>
 <text x="339.2" y="162" class="cdim">installs @openai/codex</text>
 <text x="53.6" y="182" class="cdim">3</text>
-<text x="78.8" y="182">Gemini CLI</text>
+<text x="78.8" y="182">Antigravity</text>
 <text x="196.4" y="182" class="c32">● installed</text>
-<text x="339.2" y="182" class="cdim">~/.local/share/agent-jail/tools/gemini</text>
+<text x="339.2" y="182" class="cdim">~/.local/bin/agy</text>
 <text x="53.6" y="202" class="cdim">4</text>
 <text x="78.8" y="202">Qwen Code</text>
 <text x="196.4" y="202" class="cdim">○ not installed</text>

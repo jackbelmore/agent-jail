@@ -76,8 +76,8 @@ def stand_in(path: Path) -> None:
 
 
 def stage(root: Path) -> tuple[Path, Path, dict[str, str]]:
-    """A home directory with a git project, an SSH key, Claude Code and
-    OpenCode on PATH, and Gemini CLI installed by agent-jail."""
+    """A home directory with a git project, an SSH key, and Claude Code,
+    OpenCode and Antigravity CLI on PATH."""
     home = root / "home"
     work = home / "Projects" / "my-app"
     work.mkdir(parents=True)
@@ -85,7 +85,7 @@ def stage(root: Path) -> tuple[Path, Path, dict[str, str]]:
     (home / ".ssh" / "id_ed25519").write_text("PRIVATE KEY\n")
     stand_in(home / ".local/bin/claude")
     stand_in(home / ".opencode/bin/opencode")
-    stand_in(home / ".local/share/agent-jail/tools/gemini/bin/gemini")
+    stand_in(home / ".local/bin/agy")
     env = {
         "HOME": str(home),
         "PATH": f"{home}/.local/bin:{home}/.opencode/bin:/usr/bin:/bin",

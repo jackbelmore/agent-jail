@@ -53,11 +53,12 @@ readonly SECCOMP_DENY=(
 prog=${0##*/}
 
 # Agents agent-jail knows how to find and install, in the order the picker
-# lists them: profile|name shown|npm package|command.
+# lists them: profile|name shown|npm package|command. With no npm package, you
+# install the agent yourself and agent-jail finds its command on PATH.
 readonly AGENTS=(
     "claude|Claude Code|@anthropic-ai/claude-code|claude"
     "codex|Codex|@openai/codex|codex"
-    "gemini|Gemini CLI|@google/gemini-cli|gemini"
+    "agy|Antigravity||agy"
     "qwen|Qwen Code|@qwen-code/qwen-code|qwen"
     "opencode|OpenCode|opencode-ai|opencode"
     "continue|Continue|@continuedev/cli|cn"
@@ -209,9 +210,10 @@ find_autorun() {
         find "$d" -maxdepth 1 -type f \( -name .mcp.json -o -name .envrc \
             -o -name opencode.json -o -name opencode.jsonc -o -name crush.json \
             -o -name .crush.json -o -name crushrc -o -name .crushrc \) -print0 || true
-        find "$d"/.claude "$d"/.codex "$d"/.gemini "$d"/.qwen "$d"/.opencode \
-            "$d"/.continue "$d"/.vscode "$d"/.cursor "$d"/.github "$d"/.claude-plugin \
-            "$d"/.crush/commands "$d"/.crush/skills -maxdepth 4 -type f -print0 || true
+        find "$d"/.claude "$d"/.codex "$d"/.gemini "$d"/.agents "$d"/.qwen \
+            "$d"/.opencode "$d"/.continue "$d"/.vscode "$d"/.cursor "$d"/.github \
+            "$d"/.claude-plugin "$d"/.crush/commands "$d"/.crush/skills \
+            -maxdepth 4 -type f -print0 || true
         find "$d"/.crush -maxdepth 1 -name crush.json -type f -print0 || true
     } 2>/dev/null | xargs -0r sha256sum | LC_ALL=C sort
 }
@@ -344,16 +346,24 @@ profile_codex() {
     # are a separate setting and stay as they are.
     seed .codex/config.toml 'sandbox_mode = "danger-full-access"
 check_for_update_on_startup = false'
+    # Its browser login waits for a callback to localhost:1455, which is the
+    # jail's localhost, not the browser's.
+    if [[ ! -e $state_dir/.codex/auth.json && ${1:-} != login ]]; then
+        say "to log in, run: $prog codex login --device-auth" \
+            "(the browser login can't reach Codex in the jail)"
+    fi
 }
 
-profile_gemini() {
-    use_agent gemini
-    state=(.gemini)
-    # The package is read-only in the jail: update with --install instead.
-    seed .gemini/settings.json '{
-  "general": { "enableAutoUpdate": false, "enableAutoUpdateNotification": false },
-  "privacy": { "usageStatisticsEnabled": false }
-}'
+profile_agy() {
+    use_agent agy
+    # Google's installer puts one binary in ~/.local/bin; it is read-only in the
+    # jail, so update it with agy update outside. Settings, logins and
+    # conversations go in ~/.gemini/antigravity-cli and ~/.gemini/config, and an
+    # embedded ripgrep is unpacked into ~/.cache/antigravity. Its own terminal
+    # sandbox is off by default and needs user namespaces, which the jail
+    # disables. It prefers the keyring for its sign-in token; the jail has no
+    # D-Bus, so it has to use its token file in ~/.gemini/antigravity-cli.
+    state=(.gemini .cache/antigravity)
 }
 
 profile_qwen() {
@@ -923,6 +933,7 @@ run_jail() {
 # package's install scripts run in a jail that can write only the new copy.
 install_agent() {
     agent_info "$1" || die "$1 is not an installable agent (see --list)"
+    [[ $a_pkg ]] || die "$(not_npm)"
     [[ $net != none ]] || die "installing needs the network; leave out --net none"
     local dest=$tools_dir/$1 new=$tools_dir/.$1.new npm version
     npm=$(resolve npm) || die "npm is not installed (needed to install $a_title)"
@@ -994,7 +1005,7 @@ agent_rows() {
         elif p=$(command -v -- "$a_cmd" 2>/dev/null); then
             rows+=("$i|$a_title|installed|$(tilde "$p")")
         else
-            rows+=("$i|$a_title|not installed|installs $a_pkg")
+            rows+=("$i|$a_title|not installed|${a_pkg:+installs }${a_pkg:-not installed by agent-jail}")
         fi
     done
     rows+=("s|Shell|built in|bash with the jail's view, no agent")
@@ -1136,11 +1147,21 @@ pick_agent() {
     fi
 }
 
+# How to install the agent agent_info last looked up, which has no npm package.
+not_npm() {
+    case $a_cmd in
+        agy) echo "$a_title is not an npm package; install it with Google's installer," \
+                  "then run $prog again: curl -fsSL https://antigravity.google/cli/install.sh | bash" ;;
+        *)   echo "$a_title is not installed, and agent-jail can't install it" ;;
+    esac
+}
+
 # Offer to install agent $profile when it isn't installed; fail if declined.
 offer_install() {
     local answer
     find_agent "$profile" >/dev/null && return 0
     agent_info "$profile"
+    [[ $a_pkg ]] || die "$(not_npm)"
     [[ -t 0 && -t 2 ]] || die "$a_title is not installed; install it with: $prog --install $profile"
     colours 2
     printf '\n  %s%s%s is not installed. agent-jail can install %s into\n' \
@@ -1616,7 +1637,7 @@ done
 state_dir=$state_base/$profile
 cmd=() ro_paths=() state=() imports=() env=() path=() block_hosts=()
 mkdir -p -- "$state_dir"
-"profile_$profile"
+"profile_$profile" "$@"
 ((inspect)) && cmd=(/usr/bin/bash)
 cmd+=("$@")
 for p in "${extra_ro[@]}"; do ro_paths+=("$(readlink -e -- "$p")"); done

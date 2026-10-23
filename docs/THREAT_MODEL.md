@@ -51,7 +51,7 @@ Read these before trusting the jail with anything.
    `package.json` scripts, test files, `.envrc` and editor task files run
    unsandboxed when *you* run them. Review the diff. Git metadata, and agent and
    editor settings that can run commands (`.claude/`, `.codex/`, `.gemini/`,
-   `.qwen/`, `.opencode/`, `.continue/`, `.vscode/`, `.cursor/`, `.github/`,
+   `.agents/`, `.qwen/`, `.opencode/`, `.continue/`, `.vscode/`, `.cursor/`, `.github/`,
    `.crush/commands/`, `.mcp.json`, `opencode.json`, `crush.json`, `crushrc`,
    `.envrc`), are checked automatically and reported, not blocked. A tool that
    runs git on the host *while the agent is still running*, such as an editor's

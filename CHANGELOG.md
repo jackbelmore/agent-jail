@@ -4,6 +4,11 @@
 
 ### Added
 
+- A profile for Google's Antigravity CLI (`agy`), which replaces Gemini CLI.
+  `agent-jail` runs the `agy` that Google's installer put on your PATH, with its
+  state in the jail; a project's `.agents/` folder is now watched too.
+- `agent-jail codex` says to log in with `codex login --device-auth` until Codex
+  has a login: its browser login can't reach the jail.
 - An "Alternatives" section in the README comparing ai-jail, Anthropic's
   sandbox-runtime and Docker Sandboxes (plus container-use and landrun), with
   where each is the better choice.
@@ -41,6 +46,13 @@
   scope with at most 50% of RAM (no swap) and 4096 processes and threads.
   `--memory SIZE|PERCENT|off` and `--tasks N|off` change them. Without systemd
   the jail runs as before, and `--check` says the limits are off.
+
+### Removed
+
+- The Gemini CLI profile (`gemini`). Google is retiring Gemini CLI in favour
+  of Antigravity CLI; use `agent-jail agy`. A copy installed with
+  `--install gemini` stays in `~/.local/share/agent-jail/tools/gemini` until you
+  delete it.
 
 ### Fixed
 
