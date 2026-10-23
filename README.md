@@ -6,7 +6,7 @@
 change only the folder you start them in.**
 
 <p align="center">
-  <img src="docs/picker.svg" alt="The agent-jail picker: six coding agents, whether each is installed, and an offer to install Codex inside the jail">
+  <img src="docs/picker.svg" alt="The agent-jail picker: eight coding agents, whether each is installed, and an offer to install Codex inside the jail">
 </p>
 
 An agent's own permission prompts are checked by the agent itself, and
@@ -68,6 +68,8 @@ $ agent-jail --install claude             # install or update an agent
 | Qwen Code | `agent-jail qwen` | `@qwen-code/qwen-code` | From inside `agent-jail qwen` |
 | OpenCode | `agent-jail opencode` | `opencode-ai` | `agent-jail opencode auth login` |
 | Continue | `agent-jail continue` | `@continuedev/cli` | Through `~/.continue/config.yaml`, which the jail reads but can't change |
+| Crush | `agent-jail crush` | `@charmland/crush` | `agent-jail crush login` (Charm Hyper), `crush login copilot` or `crush login grok` print a device code; or paste a provider API key when it starts. Not `crush login openai`, which waits for a `localhost` callback |
+| GitHub Copilot CLI | `agent-jail copilot` | `@github/copilot` | `agent-jail copilot login --device-code`, or `/login` and choose "Sign in with a device code". Its default browser login waits for a `localhost` callback |
 | A shell | `agent-jail shell` | built in | Nothing to log in to: it's for seeing what an agent would see |
 
 Each agent keeps its logins, sessions and settings in
@@ -90,6 +92,20 @@ Per agent:
   and Qwen Code's telemetry host is blocked.
 - **OpenCode** reads your `~/.config/opencode/opencode.json` but can't change it;
   auto-update and session sharing are off.
+- **Crush** reads your `~/.config/crush/crush.json` and `crushrc` but can't
+  change them, and keeps logins and API keys in the jail. Its metrics are off,
+  and their host is blocked as well. It still checks GitHub for a newer release
+  when it starts (a notice only; there is no switch for it). Its npm package
+  downloads the Go binary from Crush's GitHub release while installing, and
+  checks it against the hash in the package; the jail runs that binary directly.
+  Crush is source-available under the FSL-1.1-MIT licence.
+- **GitHub Copilot CLI**: auto-update is off (`COPILOT_AUTO_UPDATE=false` and
+  its settings), and so is its own bubblewrap sandbox, which, like Codex's,
+  can't start inside the jail. With no keyring in the jail, its login token is
+  kept in plain text in the jail's `~/.copilot`. On first run it unpacks itself,
+  about 240 MB, into the jail's `~/.cache/copilot`. Its usage telemetry can't
+  be turned off while you use it with a GitHub account. Copilot CLI is
+  proprietary software.
 
 ### Installing agents
 
@@ -288,7 +304,9 @@ pointer file it created, because git runs hooks and `core.fsmonitor` commands fr
 those the next time you type `git status` on the host. It also warns when the
 agent created or changed a project file that another tool runs commands from:
 Claude Code hooks in `.claude/settings.json`, MCP servers in `.mcp.json` or
-`.codex/config.toml`, VS Code tasks, `.envrc`. Opening the project with that tool
+`.codex/config.toml`, VS Code tasks, `.envrc`, Crush's `crushrc` and
+`crush.json`, and anything under `.github/` (Copilot's hooks and extensions, and
+CI workflows). Opening the project with that tool
 outside the jail would run them with all of your access.
 
 ### Memory and process limits

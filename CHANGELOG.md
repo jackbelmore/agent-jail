@@ -4,6 +4,12 @@
 
 ### Added
 
+- Profiles for Crush (`crush`, `@charmland/crush`) and GitHub Copilot CLI
+  (`copilot`, `@github/copilot`), each installed and run in the jail before
+  adding it. Crush runs its Go binary directly with metrics off; Copilot starts
+  with auto-update and its own sandbox off. Their project files that can run
+  commands (`.crushrc`, `crush.json`, `.crush/commands`, `.github/`, `.cursor/`)
+  are now watched too.
 - Files in the project that look like secrets (`.env`, `.env.*`, `*.pem`,
   `*.key`, `id_ed25519`, `.netrc`, ...) are hidden: `/dev/null` is mounted over
   each one, so the agent can't read, change, rename or delete it. Templates such
