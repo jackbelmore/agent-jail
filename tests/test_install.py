@@ -69,7 +69,7 @@ def bash_complete(line: str) -> list[str]:
 
 
 def test_bash_completion():
-    assert bash_complete("agent-jail co") == ["codex", "continue"]
+    assert bash_complete("agent-jail co") == ["codex", "continue", "copilot"]
     assert bash_complete("agent-jail --net ") == ["isolated", "none", "host"]
     assert bash_complete("agent-jail --install q") == ["qwen"]
     # After the profile, words are the agent's.
@@ -84,7 +84,7 @@ def test_fish_completion():
                              text=True, check=True)
         return [row.split("\t")[0] for row in out.stdout.splitlines()]
 
-    assert complete("agent-jail co") == ["codex", "continue"]
+    assert complete("agent-jail co") == ["codex", "continue", "copilot"]
     assert complete("agent-jail --ch") == ["--check"]
     assert complete("agent-jail codex --ne") == []
 

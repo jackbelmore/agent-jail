@@ -46,7 +46,7 @@ SCENES = {
         "args": [],
         "steps": [(b"\x1b[B", None), (b"\r", b"[Y/n] ")],
         "finish": b"n\r",
-        "label": "The agent-jail picker: six coding agents, whether each is installed, "
+        "label": "The agent-jail picker: eight coding agents, whether each is installed, "
                  "and an offer to install Codex inside the jail",
     },
     "inside": {

@@ -61,6 +61,8 @@ readonly AGENTS=(
     "qwen|Qwen Code|@qwen-code/qwen-code|qwen"
     "opencode|OpenCode|opencode-ai|opencode"
     "continue|Continue|@continuedev/cli|cn"
+    "crush|Crush|@charmland/crush|crush"
+    "copilot|Copilot CLI|@github/copilot|copilot"
 )
 
 die()  { printf '%s: %s\n' "$prog" "$*" >&2; exit 1; }
@@ -177,7 +179,7 @@ refuse_reason() {
     [[ $w == /*/* ]] || { echo "it is a top-level directory"; return; }
     mountpoint -q -- "$w" 2>/dev/null && { echo "it is the root of a mounted filesystem"; return; }
     for d in .ssh .gnupg .config .local .cache .pki .password-store .mozilla \
-             .aws .kube .docker .var .claude .codex .gemini; do
+             .aws .kube .docker .var .claude .codex .gemini .copilot; do
         if [[ $w == "$HOME/$d" || $w == "$HOME/$d"/* ]]; then
             echo "it is inside ~/$d"
             return
@@ -205,9 +207,12 @@ find_autorun() {
     local d=$1
     {
         find "$d" -maxdepth 1 -type f \( -name .mcp.json -o -name .envrc \
-            -o -name opencode.json -o -name opencode.jsonc \) -print0 || true
+            -o -name opencode.json -o -name opencode.jsonc -o -name crush.json \
+            -o -name .crush.json -o -name crushrc -o -name .crushrc \) -print0 || true
         find "$d"/.claude "$d"/.codex "$d"/.gemini "$d"/.qwen "$d"/.opencode \
-            "$d"/.continue "$d"/.vscode -maxdepth 4 -type f -print0 || true
+            "$d"/.continue "$d"/.vscode "$d"/.cursor "$d"/.github "$d"/.claude-plugin \
+            "$d"/.crush/commands "$d"/.crush/skills -maxdepth 4 -type f -print0 || true
+        find "$d"/.crush -maxdepth 1 -name crush.json -type f -print0 || true
     } 2>/dev/null | xargs -0r sha256sum | LC_ALL=C sort
 }
 
@@ -373,6 +378,37 @@ profile_continue() {
     use_agent continue
     state=(.continue)
     imports=(.continue/config.yaml)
+}
+
+profile_crush() {
+    local root
+    use_agent crush
+    # The package's postinstall step downloads Crush's Go binary into bin/,
+    # checking the sha256 in package.json; run it directly, not through node.
+    root=$(pkg_root "$(find_agent crush)")
+    [[ -x $root/bin/crush ]] && cmd=("$root/bin/crush")
+    state=(.config/crush .local/share/crush .cache/crush)
+    imports=(.config/crush/crush.json .config/crush/crushrc)
+    env=(CRUSH_DISABLE_METRICS=1 DO_NOT_TRACK=1)
+    # Crush's metrics endpoint (PostHog), should anything still try it.
+    block_hosts=(data.charm.land)
+}
+
+profile_copilot() {
+    use_agent copilot
+    # The npm command starts a Node single-executable that unpacks the app into
+    # ~/.cache/copilot on first run, so the cache is state too.
+    state=(.copilot .cache/copilot)
+    # Its updater downloads new versions into that cache and prefers them; the
+    # package is read-only in the jail, so update with --install instead. Its
+    # own bubblewrap sandbox needs the user namespaces the jail disables. With
+    # no keyring (no D-Bus), the login token goes in the jail's ~/.copilot.
+    env=(COPILOT_AUTO_UPDATE=false)
+    seed .copilot/settings.json '{
+  "autoUpdate": false,
+  "storeTokenPlaintext": true,
+  "sandbox": { "enabled": false }
+}'
 }
 
 profile_shell() {

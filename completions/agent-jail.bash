@@ -3,7 +3,7 @@
 
 _agent_jail() {
     local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD - 1]} i
-    local agents="claude codex gemini qwen opencode continue"
+    local agents="claude codex gemini qwen opencode continue crush copilot"
 
     # Options come before the profile; after it, every word is the agent's.
     for ((i = 1; i < COMP_CWORD; i++)); do

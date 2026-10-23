@@ -374,7 +374,8 @@ def test_changed_agent_settings_are_reported(jail):
 def test_list_shows_every_agent(jail):
     r = jail.run("--list", net="")
     assert r.returncode == 0
-    for name in ["Claude Code", "Codex", "Gemini CLI", "Qwen Code", "OpenCode", "Continue"]:
+    for name in ["Claude Code", "Codex", "Gemini CLI", "Qwen Code", "OpenCode", "Continue",
+                 "Crush", "Copilot CLI"]:
         assert name in r.stdout
     assert "installs @openai/codex" in r.stdout
 
@@ -438,6 +439,35 @@ def test_codex_starts_with_its_own_sandbox_off(jail):
     jail.fake_npm_tool("@openai/codex", "codex")
     r = jail.run("--shell", "codex", "-c", "cat ~/.codex/config.toml")
     assert 'sandbox_mode = "danger-full-access"' in r.stdout
+
+
+def test_crush_runs_its_binary_with_metrics_off(jail):
+    # The npm command is a node wrapper; the profile runs the Go binary it fetched.
+    pkg = jail.fake_npm_tool("@charmland/crush", "crush")
+    (pkg / "bin" / "crush").rename(pkg / "run-crush.js")
+    (jail.bin / "crush").unlink()
+    (jail.bin / "crush").symlink_to(pkg / "run-crush.js")
+    (pkg / "bin" / "crush").write_text("#!/bin/sh\necho fake-crush $CRUSH_DISABLE_METRICS\n")
+    (pkg / "bin" / "crush").chmod(0o755)
+    r = jail.run("crush")
+    assert r.stdout == "fake-crush 1\n", r.stderr
+
+
+@needs_node
+def test_copilot_starts_with_updates_and_its_sandbox_off(jail):
+    jail.fake_npm_tool("@github/copilot", "copilot")
+    r = jail.run("--shell", "copilot", "-c",
+                 "echo $COPILOT_AUTO_UPDATE; cat ~/.copilot/settings.json; ls -d ~/.cache/copilot")
+    assert r.stdout.startswith("false\n"), r.stderr
+    assert '"autoUpdate": false' in r.stdout and '"enabled": false' in r.stdout
+    assert "/.cache/copilot" in r.stdout
+
+
+def test_crush_and_copilot_project_files_are_watched(jail):
+    r = jail.sh("echo 'echo hi' > .crushrc; mkdir -p .github/hooks .crush/logs; "
+                "echo '{}' > .github/hooks/x.json; echo log > .crush/logs/crush.log")
+    assert ".crushrc" in r.stderr and ".github/hooks/x.json" in r.stderr
+    assert "crush.log" not in r.stderr  # logs change every run
 
 
 def test_uninstalled_agent_is_refused_without_a_terminal(jail):
