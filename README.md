@@ -222,6 +222,7 @@ sequenceDiagram
 | `/run/user` (D-Bus, Wayland, PipeWire) | absent |
 | Network (`--net isolated`, the default) | own network namespace via [pasta]; nftables rejects loopback, RFC 1918, CGNAT/Tailscale, link-local and multicast; public internet works |
 | Processes | own PID namespace; can't create user namespaces; no capabilities |
+| Memory and processes | at most half the RAM and 4096 processes and threads, through a systemd scope (`--memory`, `--tasks`) |
 
 ### Secret files in the project
 
@@ -259,8 +260,23 @@ Claude Code hooks in `.claude/settings.json`, MCP servers in `.mcp.json` or
 `.codex/config.toml`, VS Code tasks, `.envrc`. Opening the project with that tool
 outside the jail would run them with all of your access.
 
+### Memory and process limits
+
+The jail runs in a systemd scope, which caps the memory it may use (half the RAM
+by default, with no swap) and the number of processes and threads (4096), so a
+runaway build or a fork bomb can't freeze your desktop. A fork bomb runs out of
+processes inside the jail; a process that reaches the memory limit is killed,
+and systemd then stops the whole jail. Files the agent writes to `/tmp` and its home directory
+are held in memory, so they count too. Change the limits with `--memory 8G` or
+`--memory 25%` and `--tasks 1000`, or turn one off with `off`. While the agent
+runs, `systemctl --user status` lists the scope as, for example,
+`agent-jail claude in ~/Projects/my-app`.
+
+This needs a systemd user session. Without one the jail still starts, and
+`agent-jail --check` says that limits are off.
+
 What it does **not** protect against (exfiltration of what's in the directory, code
-you later run, kernel bugs, resource exhaustion, DNS tunnelling) is listed in
+you later run, kernel bugs, CPU and disk exhaustion, DNS tunnelling) is listed in
 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 ## Why these particular defences
@@ -333,6 +349,9 @@ fails there with a permission error, allow it, for example with
 `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0` (which is what CI
 does).
 
+Memory and process limits need a systemd user session (`systemd-run --user`),
+which most desktop distributions have. Without one, the jail runs without them.
+
 `agent-jail --check` checks all of this at any time, and `./install.sh` runs it
 for you.
 
@@ -356,6 +375,8 @@ agent-jail [options] [PROFILE [ARGS...]]
   --hide PATTERN             also hide project files named like PATTERN
   --show PATTERN             don't hide files named like PATTERN
   --no-hide                  hide no files, not even .env and keys
+  --memory SIZE|PERCENT|off  memory limit (default 50% of RAM)
+  --tasks N|off              process and thread limit (default 4096)
   --shell                    run bash with the profile's sandbox instead
   --force                    run in a directory that is normally refused
   --dry-run                  print the pasta/bwrap command line

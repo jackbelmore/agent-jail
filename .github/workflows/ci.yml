@@ -30,6 +30,15 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo modprobe nf_tables
 
+      # The runner has no login session. A lingering user manager lets the
+      # --memory and --tasks tests run instead of being skipped.
+      - name: Start a systemd user manager
+        run: |
+          sudo loginctl enable-linger "$USER"
+          runtime=/run/user/$(id -u)
+          for _ in $(seq 50); do [ -S "$runtime/bus" ] && break; sleep 0.2; done
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
       - name: shellcheck
         run: shellcheck bin/agent-jail install.sh completions/agent-jail.bash
 

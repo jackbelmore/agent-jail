@@ -22,6 +22,7 @@ may be compromised. Assume it actively tries to get out.
 | The LAN, router, tailnet, cloud metadata endpoints | nftables in the jail's namespace rejects 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 (except the DNS forwarder), 127/8, multicast, IPv6 ULA and link-local. |
 | Inbound exposure | pasta's automatic port forwarding (`-t`, `-u`, `-T`, `-U`, all `auto` by default) is set to `none`. |
 | Other processes | PID namespace; no capabilities; nested user namespaces disabled (`--disable-userns`). |
+| Your machine's memory and process table | With a systemd user session, the jail and pasta run in a scope with `MemoryMax` (50% of RAM), `MemorySwapMax=0` and `TasksMax` (4096). The jail's tmpfs `/tmp` and `$HOME` are charged to it. |
 | Your terminal input | If the kernel still allows `TIOCSTI` keystroke injection, the agent is started in a new session. |
 
 ## What is not protected
@@ -60,8 +61,11 @@ Read these before trusting the jail with anything.
 6. **Kernel and bubblewrap bugs.** There is no seccomp filter beyond bubblewrap's
    own. A kernel privilege escalation from an unprivileged user namespace defeats
    the jail.
-7. **Resource exhaustion.** No CPU, memory, PID or disk limits. A fork bomb or a
-   full disk is your problem.
+7. **Resource exhaustion.** Memory and task limits need a systemd user manager
+   with the memory and pids controllers delegated (the default with cgroup v2);
+   without one, there are none, and `--check` says so. CPU time and disk space
+   are never limited: the agent can keep every core busy and fill the disk the
+   project is on.
 8. **Public addresses of things you own.** Only private ranges are blocked. A LAN
    device with a global IPv6 address, or a host service bound to all interfaces and
    reachable on one of the host's public addresses, can still be reached.

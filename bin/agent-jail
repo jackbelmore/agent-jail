@@ -21,6 +21,9 @@ readonly HIDE_DEFAULT=(.env '.env.*' '*.pem' '*.key' '*.p12' '*.pfx' '*.jks' '*.
     id_rsa id_dsa id_ecdsa id_ecdsa_sk id_ed25519 id_ed25519_sk
     .netrc .git-credentials .pgpass '*.kdbx')
 readonly SHOW_DEFAULT=('*.example' '*.sample' '*.template' '*.dist')
+# Default --memory and --tasks: room for an agent and a big build, but not for
+# a runaway process to take the whole machine.
+readonly MEMORY_DEFAULT=50% TASKS_DEFAULT=4096
 prog=${0##*/}
 
 # Agents agent-jail knows how to find and install, in the order the picker
@@ -66,6 +69,10 @@ Options:
                     ro        all of .git read-only (no commits inside)
                     off       no extra git protection
   --ro PATH         also expose PATH read-only (repeatable)
+  --memory SIZE     memory the jail may use: bytes with K, M, G or T, a
+                    percentage of RAM, or off (default $MEMORY_DEFAULT)
+  --tasks N         processes and threads the jail may run, or off
+                    (default $TASKS_DEFAULT)
   --hide PATTERN    also hide project files whose name matches PATTERN, a
                     glob such as '*.secret' (repeatable)
   --show PATTERN    don't hide files whose name matches PATTERN (repeatable)
@@ -333,6 +340,47 @@ profile_shell() {
     cmd=(/usr/bin/bash)
 }
 
+# --- resource limits --------------------------------------------------------
+
+# Set limit_props to the systemd-run properties for --memory and --tasks. They
+# are left empty, with limits_off saying why, when both are off or there is no
+# systemd user manager that can enforce them (no systemd, no user session, or
+# cgroup controllers not delegated).
+use_limits() {
+    local probe=''
+    limit_props=() limits_off=''
+    if [[ $memory != off ]]; then
+        # Without MemorySwapMax a runaway would page the machine to a halt
+        # instead of being stopped at the limit.
+        limit_props+=(-p "MemoryMax=$memory" -p MemorySwapMax=0)
+        probe+=" && test -e \"\$d/memory.max\""
+    fi
+    if [[ $tasks != off ]]; then
+        limit_props+=(-p "TasksMax=$tasks")
+        probe+=" && test -e \"\$d/pids.max\""
+    fi
+    if ((${#limit_props[@]} == 0)); then
+        limits_off="off"
+    elif ! command -v systemd-run >/dev/null; then
+        limits_off="none: systemd-run isn't installed"
+    elif ! systemd-run --user --scope --quiet --collect "${limit_props[@]}" -- /bin/sh -c \
+            "d=/sys/fs/cgroup\$(sed -n 's/^0:://p' /proc/self/cgroup)$probe" \
+            </dev/null >/dev/null 2>&1; then
+        limits_off="none: no systemd user session to enforce them"
+    fi
+    [[ -z $limits_off ]] || limit_props=()
+}
+
+# Say what the limits are, as the picker shows them.
+describe_limits() {
+    local m=$memory t="$tasks tasks"
+    if [[ -n $limits_off ]]; then echo "$limits_off"; return; fi
+    [[ $m == *% ]] && m+=" of RAM"
+    [[ $m == off ]] && m="any amount of"
+    [[ $t == "off tasks" ]] && t="any number of tasks"
+    echo "$m memory, $t"
+}
+
 # --- the sandbox ------------------------------------------------------------
 
 # Set run to the command that starts cmd in a jail on directory $1, with git
@@ -491,6 +539,13 @@ EOF
              /usr/bin/sh -c '"$1" -f "$2" && shift 2 && exec "$@"' agent-jail-net
              "$nft" "$tmp/egress.nft" "${run[@]}")
     fi
+
+    # The whole jail, pasta included, in a systemd scope with the limits.
+    if ((${#limit_props[@]})); then
+        run=(systemd-run --user --scope --quiet --collect
+             --description "agent-jail $profile in $(tilde "$dir")" "${limit_props[@]}"
+             -- "${run[@]}")
+    fi
 }
 
 # Run $run, or print it with --dry-run. Ctrl-C belongs to the jailed process;
@@ -626,6 +681,7 @@ describe_jail() {
     printf '%s  %sNetwork%s  %s\n' "$clear" "$dim" "$reset" "$n"
     printf '%s  %sGit%s      %s\n' "$clear" "$dim" "$reset" "$g"
     printf '%s  %sSecrets%s  %s\n' "$clear" "$dim" "$reset" "$(describe_hidden)"
+    printf '%s  %sLimits%s   %s\n' "$clear" "$dim" "$reset" "$(describe_limits)"
 }
 
 # The hidden files, relative to the working directory: the first three.
@@ -660,7 +716,7 @@ draw_menu() {
     printf '%s\n' "$clear"
     printf '%s  %s↑/↓ choose · enter run · 1-%d or s pick · q quit%s\n' "$clear" "$dim" \
         "${#AGENTS[@]}" "$reset"
-    menu_lines=$((${#rows[@]} + 10))
+    menu_lines=$((${#rows[@]} + 11))
 }
 
 # Ask which agent to run, with the arrow keys (or by number on a terminal
@@ -818,6 +874,13 @@ check_setup() {
         missing+=(node)
     fi
 
+    use_limits
+    if [[ -z $limits_off ]]; then
+        passed "systemd user session, for memory and task limits"
+    else
+        noted "no systemd user session, so the jail runs without memory and task limits"
+    fi
+
     if [[ $(cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null || echo 1) != 0 ]]; then
         noted "TIOCSTI is on, so agents run in a new session (window resizes may not reach them)"
     fi
@@ -861,6 +924,7 @@ check_setup() {
 
 net=isolated git_mode=protect force=0 dry_run=0 inspect=0 list=0 check=0 install=
 host_ports=() extra_ro=() hide_default=1 hide_patterns=() show_patterns=()
+memory=$MEMORY_DEFAULT tasks=$TASKS_DEFAULT limits_asked=0
 while (($#)); do
     case $1 in
         --net)        net=${2:?--net needs a mode}; shift 2 ;;
@@ -876,6 +940,10 @@ while (($#)); do
         --show)       show_patterns+=("${2:?--show needs a pattern}"); shift 2 ;;
         --show=*)     show_patterns+=("${1#*=}"); shift ;;
         --no-hide)    hide_default=0 hide_patterns=(); shift ;;
+        --memory)     memory=${2:?--memory needs a size}; limits_asked=1; shift 2 ;;
+        --memory=*)   memory=${1#*=}; limits_asked=1; shift ;;
+        --tasks)      tasks=${2:?--tasks needs a number}; limits_asked=1; shift 2 ;;
+        --tasks=*)    tasks=${1#*=}; limits_asked=1; shift ;;
         --install)    install=${2:?--install needs an agent}; shift 2 ;;
         --install=*)  install=${1#*=}; shift ;;
         --list)       list=1; shift ;;
@@ -897,6 +965,9 @@ for p in "${host_ports[@]}"; do
     if ! [[ $p =~ ^[0-9]+$ ]] || ((p < 1 || p > 65535)); then die "bad port: $p"; fi
 done
 ((${#host_ports[@]} == 0)) || [[ $net == isolated ]] || die "--host-port needs --net isolated"
+[[ $memory =~ ^([1-9][0-9]*[KMGT]?|([1-9][0-9]?|100)%|off)$ ]] ||
+    die "--memory must be a size such as 8G, a percentage such as 50%, or off"
+[[ $tasks =~ ^([1-9][0-9]*|off)$ ]] || die "--tasks must be a number or off"
 for p in "${hide_patterns[@]}" "${show_patterns[@]}"; do
     [[ -n $p && $p != */* ]] || die "bad pattern: '$p' (patterns match file names, without a /)"
 done
@@ -934,6 +1005,11 @@ tiocsti=$(cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null || echo 1)
 if [[ $tiocsti != 0 ]]; then
     tiocsti=1
     warn "TIOCSTI is enabled on this kernel; starting a new session (window resizes may not reach the agent)"
+fi
+
+use_limits
+if ((limits_asked)) && [[ $limits_off == none:* ]]; then
+    warn "running without --memory and --tasks limits (${limits_off#none: })"
 fi
 
 if [[ -n $install ]]; then
