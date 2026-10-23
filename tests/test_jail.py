@@ -12,7 +12,7 @@ import time
 import uuid
 
 import pytest
-from conftest import JAIL, needs_node, needs_pasta
+from conftest import JAIL, needs_node, needs_pasta, needs_systemd
 
 CONNECT = """
 import socket, sys
@@ -34,6 +34,20 @@ try:
     print("OPEN")
 except OSError:
     print("BLOCKED")
+"""
+
+FORK = """
+import os, sys, time
+started = 0
+for _ in range(int(sys.argv[1])):
+    try:
+        if os.fork() == 0:
+            time.sleep(5)
+            os._exit(0)
+    except OSError:
+        break
+    started += 1
+print(started)
 """
 
 
@@ -155,6 +169,48 @@ def test_secrets_in_dependency_trees_are_left_alone(jail):
     (jail.work / "node_modules" / "pkg" / "test.pem").write_text("fixture\n")
     r = jail.sh("cat node_modules/pkg/test.pem")
     assert r.stdout == "fixture\n"
+
+
+# --- resource limits --------------------------------------------------------
+
+@needs_systemd
+def test_task_limit_stops_a_fork_bomb(jail):
+    jail.with_user_session()
+    r = jail.sh(py(FORK, "100"), "--tasks", "30")
+    assert int(r.stdout.strip()) < 30, r.stderr
+
+
+@needs_systemd
+def test_memory_limit_stops_a_runaway(jail):
+    jail.with_user_session()
+    grab = "python3 -I -c 'b = bytes(300_000_000) + bytes(1); print(\"survived\")'"
+    r = jail.sh(grab, "--memory", "64M")
+    assert "survived" not in r.stdout
+    # SIGKILL from the OOM killer, or SIGTERM from systemd stopping the scope
+    # after it (OOMPolicy=stop): either way the jail is gone.
+    assert r.returncode in (137, 143)
+    assert "survived" in jail.sh(grab, "--memory", "2G").stdout
+
+
+@needs_systemd
+def test_limits_are_on_by_default(jail):
+    jail.with_user_session()
+    r = jail.run("--dry-run", "shell", net="none")
+    assert r.stdout.startswith("systemd-run --user --scope")
+    assert "MemoryMax=50%" in r.stdout and "TasksMax=4096" in r.stdout
+
+    r = jail.run("--dry-run", "--memory", "off", "--tasks", "off", "shell", net="none")
+    assert "systemd-run" not in r.stdout
+
+
+def test_without_systemd_the_jail_runs_without_limits(jail):
+    # The test XDG_RUNTIME_DIR has no systemd user manager in it.
+    r = jail.sh("echo ran")
+    assert r.stdout == "ran\n" and "limits" not in r.stderr
+    # Asking for a limit that can't be enforced says so, but still runs.
+    r = jail.sh("echo ran", "--memory", "1G")
+    assert r.stdout == "ran\n"
+    assert "without --memory and --tasks limits" in r.stderr
 
 
 # --- git: things that run on the host later --------------------------------
@@ -470,6 +526,9 @@ def test_rejects_bad_arguments(jail):
     assert jail.run("--host-port", "99999", "shell").returncode != 0
     assert jail.run("--net", "bogus", "shell").returncode != 0
     assert jail.run("no-such-profile").returncode != 0
+    for opts in (["--memory", "lots"], ["--memory", "0"], ["--memory", "150%"],
+                 ["--tasks", "-1"], ["--tasks", "many"]):
+        assert jail.run(*opts, "shell").returncode != 0, opts
 
 
 @needs_pasta

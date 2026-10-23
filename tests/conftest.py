@@ -31,6 +31,21 @@ needs_pasta = pytest.mark.skipif(
 
 needs_node = pytest.mark.skipif(not shutil.which("node"), reason="needs node")
 
+
+def _systemd_scopes_work() -> bool:
+    if not shutil.which("systemd-run"):
+        return False
+    probe = subprocess.run(
+        ["systemd-run", "--user", "--scope", "--quiet", "-p", "TasksMax=100", "true"],
+        capture_output=True, check=False,
+    )
+    return probe.returncode == 0
+
+
+needs_systemd = pytest.mark.skipif(
+    not _systemd_scopes_work(), reason="needs a systemd user session for --memory and --tasks"
+)
+
 # Stands in for npm: tries to escape the install jail, then installs a fake
 # agent whose output reports what the install could see.
 FAKE_NPM = """
@@ -83,6 +98,13 @@ class Jail:
             cmd, cwd=cwd or self.work, env=self.env,
             capture_output=True, text=True, timeout=60, check=False,
         )
+
+    def with_user_session(self) -> None:
+        """Let agent-jail reach the real systemd user manager. The throwaway
+        XDG_RUNTIME_DIR otherwise hides it, so limits are off in other tests."""
+        self.env["XDG_RUNTIME_DIR"] = os.environ["XDG_RUNTIME_DIR"]
+        if bus := os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+            self.env["DBUS_SESSION_BUS_ADDRESS"] = bus
 
     def sh(self, script: str, *opts: str, net: str = "none"):
         return self.run(*opts, "shell", "-c", script, net=net)

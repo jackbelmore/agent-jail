@@ -21,6 +21,8 @@ complete -c agent-jail -n $before -l ro -r -F -d 'Also expose a path read-only'
 complete -c agent-jail -n $before -l hide -x -d 'Also hide project files named like this'
 complete -c agent-jail -n $before -l show -x -d "Don't hide files named like this"
 complete -c agent-jail -n $before -l no-hide -d 'Hide no files, not even .env and keys'
+complete -c agent-jail -n $before -l memory -x -a '25% 50% 75% 4G 8G off' -d 'Memory limit'
+complete -c agent-jail -n $before -l tasks -x -a '1024 4096 off' -d 'Process and thread limit'
 complete -c agent-jail -n $before -l shell -d "Start bash with the agent's view"
 complete -c agent-jail -n $before -l list -d 'List the agents'
 complete -c agent-jail -n $before -l check -d 'Check that everything needed is installed'

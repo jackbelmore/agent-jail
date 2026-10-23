@@ -9,7 +9,8 @@ _agent_jail() {
     for ((i = 1; i < COMP_CWORD; i++)); do
         [[ ${COMP_WORDS[i]} == -* ]] && continue
         case ${COMP_WORDS[i - 1]} in
-            --net | --host-port | --git | --ro | --hide | --show | --install) continue ;;
+            --net | --host-port | --git | --ro | --hide | --show | --memory | --tasks | --install)
+                continue ;;
         esac
         return 0
     done
@@ -19,11 +20,13 @@ _agent_jail() {
         --git)       mapfile -t COMPREPLY < <(compgen -W "protect ro off" -- "$cur"); return ;;
         --install)   mapfile -t COMPREPLY < <(compgen -W "$agents" -- "$cur"); return ;;
         --ro)        mapfile -t COMPREPLY < <(compgen -f -- "$cur"); return ;;
+        --memory)    mapfile -t COMPREPLY < <(compgen -W "25% 50% 75% 4G 8G off" -- "$cur"); return ;;
+        --tasks)     mapfile -t COMPREPLY < <(compgen -W "1024 4096 off" -- "$cur"); return ;;
         --host-port | --hide | --show) return ;;
     esac
     if [[ $cur == -* ]]; then
         mapfile -t COMPREPLY < <(compgen -W "--net --host-port --git --ro --hide --show
-            --no-hide --shell --list --check --install --force --dry-run --help --version" \
+            --no-hide --memory --tasks --shell --list --check --install --force --dry-run --help --version" \
             -- "$cur")
     else
         mapfile -t COMPREPLY < <(compgen -W "$agents shell" -- "$cur")

@@ -9,6 +9,10 @@
   each one, so the agent can't read, change, rename or delete it. Templates such
   as `.env.example` stay visible. `--hide PATTERN` hides more, `--show PATTERN`
   keeps a file visible, and `--no-hide` turns it off.
+- Memory and process limits: with a systemd user session, the jail runs in a
+  scope with at most 50% of RAM (no swap) and 4096 processes and threads.
+  `--memory SIZE|PERCENT|off` and `--tasks N|off` change them. Without systemd
+  the jail runs as before, and `--check` says the limits are off.
 
 ### Fixed
 
