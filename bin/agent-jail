@@ -125,9 +125,10 @@ refuse_reason() {
 }
 
 # Every .git entry (directory, or pointer file in a worktree/submodule) under
-# the working directory, skipping dependency trees.
+# the working directory, skipping dependency trees. -mindepth 1 keeps a
+# working directory that is itself called venv or target from being pruned.
 find_git() {
-    find "$1" -maxdepth 6 \
+    find "$1" -mindepth 1 -maxdepth 6 \
         \( -name node_modules -o -name .venv -o -name venv -o -name target \) -prune \
         -o -name .git -print 2>/dev/null | LC_ALL=C sort
 }

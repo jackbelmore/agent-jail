@@ -103,6 +103,16 @@ def test_git_hooks_and_config_are_read_only(jail):
     assert "fsmonitor" not in (jail.work / ".git/config").read_text()
 
 
+@pytest.mark.parametrize("name", ["venv", "target"])
+def test_git_is_protected_in_a_directory_named_like_a_dependency_tree(jail, name):
+    # Dependency trees are skipped when looking for .git; the project itself isn't.
+    work = jail.home / name
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    r = jail.run("shell", "-c", "echo x > .git/hooks/pre-commit", cwd=work)
+    assert "Read-only file system" in r.stderr
+    assert not (work / ".git/hooks/pre-commit").exists()
+
+
 def test_commits_still_work_in_protect_mode(jail):
     r = jail.sh("git -c user.name=t -c user.email=t@example.com "
                 "commit -q --allow-empty -m from-jail && echo ok")
