@@ -93,6 +93,70 @@ def test_cannot_create_user_namespaces(jail):
     assert "nested-userns" not in r.stdout
 
 
+# --- secret files in the project -------------------------------------------
+
+def plant_secrets(work):
+    (work / "certs").mkdir()
+    (work / "deploy").mkdir()
+    files = {
+        ".env": "API_KEY=sk-canary-dotenv\n",
+        ".env.production": "DB_PASSWORD=canary-prod\n",
+        "certs/server.pem": "-----BEGIN PRIVATE KEY----- canary-pem\n",
+        "deploy/id_ed25519": "OPENSSH PRIVATE KEY canary-ssh\n",
+        ".env.example": "API_KEY=\n",
+        "notes.txt": "visible\n",
+    }
+    for name, text in files.items():
+        (work / name).write_text(text)
+    return files
+
+
+def test_secret_files_are_hidden(jail):
+    files = plant_secrets(jail.work)
+    names = " ".join(files)
+    r = jail.sh(f"cat {names}; echo x > .env; rm .env; mv certs/server.pem stolen")
+    assert "canary" not in r.stdout
+    assert "API_KEY=\nvisible\n" in r.stdout  # templates and other files still show
+    assert r.stderr.count("Permission denied") == 5
+    assert "Device or resource busy" in r.stderr
+    for name, text in files.items():
+        assert (jail.work / name).read_text() == text
+    # The hidden files are named before the agent starts.
+    assert "hiding files that look like secrets" in r.stderr and ".env" in r.stderr
+
+
+def test_symlink_to_a_secret_hides_the_secret(jail):
+    (jail.work / "config").mkdir()
+    (jail.work / "config" / "settings").write_text("canary-linked\n")
+    (jail.work / ".env").symlink_to("config/settings")
+    r = jail.sh("cat config/settings .env")
+    assert "canary" not in r.stdout
+    assert r.stderr.count("Permission denied") == 2
+
+
+def test_hide_show_and_no_hide(jail):
+    plant_secrets(jail.work)
+    (jail.work / "token.secret").write_text("canary-custom\n")
+    r = jail.sh("cat .env token.secret .env.example", "--hide", "*.secret", "--hide", "*.example",
+                "--show", ".env")
+    # --hide applies even to templates; --show beats both.
+    assert r.stdout == "API_KEY=sk-canary-dotenv\n"
+    assert r.stderr.count("Permission denied") == 2
+
+    r = jail.sh("cat .env certs/server.pem", "--no-hide")
+    assert "sk-canary-dotenv" in r.stdout and "canary-pem" in r.stdout
+    assert "hiding" not in r.stderr
+
+    assert jail.sh("true", "--hide", "certs/server.pem").returncode != 0
+
+
+def test_secrets_in_dependency_trees_are_left_alone(jail):
+    (jail.work / "node_modules" / "pkg").mkdir(parents=True)
+    (jail.work / "node_modules" / "pkg" / "test.pem").write_text("fixture\n")
+    r = jail.sh("cat node_modules/pkg/test.pem")
+    assert r.stdout == "fixture\n"
+
+
 # --- git: things that run on the host later --------------------------------
 
 def test_git_hooks_and_config_are_read_only(jail):

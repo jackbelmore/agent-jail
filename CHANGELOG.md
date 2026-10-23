@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Files in the project that look like secrets (`.env`, `.env.*`, `*.pem`,
+  `*.key`, `id_ed25519`, `.netrc`, ...) are hidden: `/dev/null` is mounted over
+  each one, so the agent can't read, change, rename or delete it. Templates such
+  as `.env.example` stay visible. `--hide PATTERN` hides more, `--show PATTERN`
+  keeps a file visible, and `--no-hide` turns it off.
+
+### Fixed
+
+- Git hooks and config were writable when the project directory itself was
+  named `venv`, `target` or `node_modules`, because the search for `.git`
+  skipped it as a dependency tree.
+
 ## 0.2.0 (2026-10-22)
 
 ### Added

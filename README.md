@@ -15,7 +15,8 @@ kernel instead, so it holds whatever the model is talked into doing:
 
 - **Your files stay out of reach.** The agent sees your project and its own
   settings. Your SSH keys, browser profiles and other projects aren't hidden
-  behind a check; they aren't there at all.
+  behind a check; they aren't there at all. In the project itself, `.env` files
+  and private keys can't be opened.
 - **Your network stays private.** It reaches model APIs and the public web, but
   not services on your machine, your LAN or your tailnet.
 - **Nothing it leaves behind runs later.** Git hooks and config are read-only, its
@@ -214,12 +215,41 @@ sequenceDiagram
 | Rest of `$HOME` (`~/.ssh`, browser profiles, other projects, other agents) | invisible (`$HOME` is an empty tmpfs) |
 | `/usr` | read-only |
 | `/etc` | `passwd`, `group`, TLS roots, timezone and a generated `hosts`/`resolv.conf` only |
+| Files in the project that look like secrets (`.env`, `.env.*`, `*.pem`, `*.key`, `id_ed25519`, ...) | still listed, but can't be read, changed, renamed or deleted |
 | `.git/hooks`, `.git/config` | read-only (commits still work; `--git ro` blocks those too) |
 | Agent and editor settings in the project (`.claude/`, `.codex/`, `.mcp.json`, `.vscode/`, `.envrc`, ...) | read/write, but any change is reported after the run |
 | Environment | cleared (API keys and tokens in your shell don't leak in) |
 | `/run/user` (D-Bus, Wayland, PipeWire) | absent |
 | Network (`--net isolated`, the default) | own network namespace via [pasta]; nftables rejects loopback, RFC 1918, CGNAT/Tailscale, link-local and multicast; public internet works |
 | Processes | own PID namespace; can't create user namespaces; no capabilities |
+
+### Secret files in the project
+
+Before the agent starts, `agent-jail` looks through the project for files whose
+names mark them as secrets and puts `/dev/null` over each one, so opening it fails
+with "Permission denied". It prints what it hid:
+
+```console
+$ agent-jail claude
+agent-jail: hiding files that look like secrets (see --show): .env, certs/server.pem
+```
+
+The names hidden by default are `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`,
+`*.pfx`, `*.jks`, `*.keystore`, `.netrc`, `.git-credentials`, `.pgpass`, `*.kdbx`
+and OpenSSH's key names (`id_rsa`, `id_ed25519`, ...). Templates such as
+`.env.example`, `*.sample`, `*.template` and `*.dist` stay visible. `.git`,
+`node_modules` and virtualenvs aren't searched. A symlink with a secret's name
+hides the file it points to.
+
+- `--hide '*.secret'` hides more (a pattern matches file names, as in `find -name`)
+- `--show .env.test` keeps a file visible, even one you hid with `--hide`
+- `--no-hide` hides nothing; `--hide` after it starts a list of your own
+
+This only goes by file name. A secret in `config.yaml`, or one committed to git
+(the agent can run `git show HEAD:.env`), is still readable. Git also can't stage a
+hidden file, so `git add -A` fails while a tracked `.env` is hidden.
+
+### After the run
 
 After the agent exits, `agent-jail` warns about any **new** `.git` directory or
 pointer file it created, because git runs hooks and `core.fsmonitor` commands from
@@ -319,6 +349,9 @@ agent-jail [options] [PROFILE [ARGS...]]
   --host-port PORT           expose 127.0.0.1:PORT from the host (repeatable)
   --git protect|ro|off       git protection (default protect)
   --ro PATH                  expose an extra path read-only
+  --hide PATTERN             also hide project files named like PATTERN
+  --show PATTERN             don't hide files named like PATTERN
+  --no-hide                  hide no files, not even .env and keys
   --shell                    run bash with the profile's sandbox instead
   --force                    run in a directory that is normally refused
   --dry-run                  print the pasta/bwrap command line
@@ -345,7 +378,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 ```
 
 The tests run against a throwaway `$HOME`, start real sandboxes, and try each
-escape: reading a canary SSH key, leaking an environment variable, writing a git
+escape: reading a canary SSH key, reading a `.env` or private key in the project,
+leaking an environment variable, writing a git
 hook or `core.fsmonitor`, re-pointing a worktree's `.git` file, planting a plugin
 in the agent's config, following a symlink planted at an import path, an npm
 install script reading secrets or writing outside its new package, changing a
