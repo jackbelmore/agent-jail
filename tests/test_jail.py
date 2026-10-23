@@ -93,6 +93,70 @@ def test_cannot_create_user_namespaces(jail):
     assert "nested-userns" not in r.stdout
 
 
+# --- secret files in the project -------------------------------------------
+
+def plant_secrets(work):
+    (work / "certs").mkdir()
+    (work / "deploy").mkdir()
+    files = {
+        ".env": "API_KEY=sk-canary-dotenv\n",
+        ".env.production": "DB_PASSWORD=canary-prod\n",
+        "certs/server.pem": "-----BEGIN PRIVATE KEY----- canary-pem\n",
+        "deploy/id_ed25519": "OPENSSH PRIVATE KEY canary-ssh\n",
+        ".env.example": "API_KEY=\n",
+        "notes.txt": "visible\n",
+    }
+    for name, text in files.items():
+        (work / name).write_text(text)
+    return files
+
+
+def test_secret_files_are_hidden(jail):
+    files = plant_secrets(jail.work)
+    names = " ".join(files)
+    r = jail.sh(f"cat {names}; echo x > .env; rm .env; mv certs/server.pem stolen")
+    assert "canary" not in r.stdout
+    assert "API_KEY=\nvisible\n" in r.stdout  # templates and other files still show
+    assert r.stderr.count("Permission denied") == 5
+    assert "Device or resource busy" in r.stderr
+    for name, text in files.items():
+        assert (jail.work / name).read_text() == text
+    # The hidden files are named before the agent starts.
+    assert "hiding files that look like secrets" in r.stderr and ".env" in r.stderr
+
+
+def test_symlink_to_a_secret_hides_the_secret(jail):
+    (jail.work / "config").mkdir()
+    (jail.work / "config" / "settings").write_text("canary-linked\n")
+    (jail.work / ".env").symlink_to("config/settings")
+    r = jail.sh("cat config/settings .env")
+    assert "canary" not in r.stdout
+    assert r.stderr.count("Permission denied") == 2
+
+
+def test_hide_show_and_no_hide(jail):
+    plant_secrets(jail.work)
+    (jail.work / "token.secret").write_text("canary-custom\n")
+    r = jail.sh("cat .env token.secret .env.example", "--hide", "*.secret", "--hide", "*.example",
+                "--show", ".env")
+    # --hide applies even to templates; --show beats both.
+    assert r.stdout == "API_KEY=sk-canary-dotenv\n"
+    assert r.stderr.count("Permission denied") == 2
+
+    r = jail.sh("cat .env certs/server.pem", "--no-hide")
+    assert "sk-canary-dotenv" in r.stdout and "canary-pem" in r.stdout
+    assert "hiding" not in r.stderr
+
+    assert jail.sh("true", "--hide", "certs/server.pem").returncode != 0
+
+
+def test_secrets_in_dependency_trees_are_left_alone(jail):
+    (jail.work / "node_modules" / "pkg").mkdir(parents=True)
+    (jail.work / "node_modules" / "pkg" / "test.pem").write_text("fixture\n")
+    r = jail.sh("cat node_modules/pkg/test.pem")
+    assert r.stdout == "fixture\n"
+
+
 # --- git: things that run on the host later --------------------------------
 
 def test_git_hooks_and_config_are_read_only(jail):
@@ -101,6 +165,16 @@ def test_git_hooks_and_config_are_read_only(jail):
     assert r.stderr.count("Read-only file system") == 2
     assert not (jail.work / ".git/hooks/post-checkout").exists()
     assert "fsmonitor" not in (jail.work / ".git/config").read_text()
+
+
+@pytest.mark.parametrize("name", ["venv", "target"])
+def test_git_is_protected_in_a_directory_named_like_a_dependency_tree(jail, name):
+    # Dependency trees are skipped when looking for .git; the project itself isn't.
+    work = jail.home / name
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    r = jail.run("shell", "-c", "echo x > .git/hooks/pre-commit", cwd=work)
+    assert "Read-only file system" in r.stderr
+    assert not (work / ".git/hooks/pre-commit").exists()
 
 
 def test_commits_still_work_in_protect_mode(jail):
@@ -125,8 +199,52 @@ def test_worktree_pointer_file_cannot_be_repointed(jail):
 
 def test_new_git_metadata_is_reported(jail):
     r = jail.sh("git init -q vendor/lib")
-    assert "created git metadata" in r.stderr
+    assert "created or replaced git metadata" in r.stderr
     assert "vendor/lib/.git" in r.stderr
+
+
+def test_repository_cannot_be_moved_aside_and_replaced(jail):
+    # A fresh .git in place of the protected one would have writable hooks.
+    subprocess.run(["git", "init", "-q", str(jail.work / "vendor" / "lib")], check=True)
+    r = jail.sh("mv .git .git-old; mv vendor z; git init -q && echo replaced")
+    assert "cannot move '.git' to '.git-old': Device or resource busy" in r.stderr
+    assert "cannot move 'vendor' to 'z': Device or resource busy" in r.stderr
+    assert "replaced" not in r.stdout
+    assert not (jail.work / ".git-old").exists()
+
+    # A nested .git can only be copied away, not moved: the hooks stay put.
+    r = jail.sh("mv vendor/lib/.git copy")
+    assert (jail.work / "vendor/lib/.git/hooks").is_dir()
+    assert "Read-only file system" in r.stderr
+
+
+def test_commondir_redirect_is_reported_and_existing_ones_are_read_only(jail):
+    # .git/commondir makes git read config and hooks from another directory.
+    r = jail.sh("git init -q --bare .evil && echo \"$PWD/.evil\" > .git/commondir")
+    assert r.returncode == 0, r.stderr
+    assert "created or replaced git metadata" in r.stderr
+    assert ".git/commondir" in r.stderr
+
+    # Once there (or in a linked worktree's git dir), it can't be re-pointed.
+    r = jail.sh("echo /tmp > .git/commondir")
+    assert "Read-only file system" in r.stderr
+
+
+def test_replaced_repository_is_reported(jail):
+    # With --git off nothing is pinned, but the swap is still noticed afterwards.
+    r = jail.sh("mv .git .git-old && git init -q && echo replaced", "--git", "off")
+    assert "replaced" in r.stdout
+    assert "created or replaced git metadata" in r.stderr
+    assert f"{jail.work}/.git\n" in r.stderr
+
+
+def test_secret_next_to_a_nested_repository_stays_hidden(jail):
+    # The directories around a nested .git are pinned; that must not unhide.
+    subprocess.run(["git", "init", "-q", str(jail.work / "vendor" / "lib")], check=True)
+    (jail.work / "vendor" / ".env").write_text("canary-vendor\n")
+    r = jail.sh("cat vendor/.env")
+    assert "canary" not in r.stdout
+    assert "Permission denied" in r.stderr
 
 
 def test_symlinked_hooks_are_refused(jail, tmp_path):

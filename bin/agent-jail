@@ -15,6 +15,12 @@ set -euo pipefail
 
 readonly VERSION=0.2.0
 readonly DNS_ADDR=169.254.1.1     # address pasta answers DNS on, inside the jail
+# File names hidden in the project unless --no-hide, and the ones among them
+# that stay visible: templates, not secrets. --hide and --show add to these.
+readonly HIDE_DEFAULT=(.env '.env.*' '*.pem' '*.key' '*.p12' '*.pfx' '*.jks' '*.keystore'
+    id_rsa id_dsa id_ecdsa id_ecdsa_sk id_ed25519 id_ed25519_sk
+    .netrc .git-credentials .pgpass '*.kdbx')
+readonly SHOW_DEFAULT=('*.example' '*.sample' '*.template' '*.dist')
 prog=${0##*/}
 
 # Agents agent-jail knows how to find and install, in the order the picker
@@ -33,8 +39,11 @@ warn() { printf '%s: warning: %s\n' "$prog" "$*" >&2; }
 say()  { printf '%s: %s\n' "$prog" "$*" >&2; }
 
 usage() {
-    local names=() line
+    local names=() line hide
     for line in "${AGENTS[@]}"; do names+=("${line%%|*}"); done
+    hide=$(fmt -w 78 <<<"Hidden in the project unless --no-hide: files named ${HIDE_DEFAULT[*]},
+except ${SHOW_DEFAULT[*]}. A hidden file is still listed but can't be opened;
+if git has it, git show can still print what was committed.")
     cat <<EOF
 Usage: $prog [options] [PROFILE [ARGS...]]
 
@@ -57,6 +66,10 @@ Options:
                     ro        all of .git read-only (no commits inside)
                     off       no extra git protection
   --ro PATH         also expose PATH read-only (repeatable)
+  --hide PATTERN    also hide project files whose name matches PATTERN, a
+                    glob such as '*.secret' (repeatable)
+  --show PATTERN    don't hide files whose name matches PATTERN (repeatable)
+  --no-hide         hide nothing, not even the default list below
   --shell           start bash inside PROFILE's sandbox instead of the agent,
                     to see exactly what the agent would see
   --list            list the agents and whether they are installed
@@ -67,6 +80,8 @@ Options:
   --dry-run         print the sandbox command instead of running it
   -h, --help        show this help
   --version         print the version
+
+$hide
 
 Agent state lives in \${AGENT_JAIL_HOME:-\${XDG_DATA_HOME:-~/.local/share}/agent-jail}/PROFILE,
 never in the agent's normal config directories. Agents installed with
@@ -125,11 +140,17 @@ refuse_reason() {
 }
 
 # Every .git entry (directory, or pointer file in a worktree/submodule) under
-# the working directory, skipping dependency trees.
+# the working directory, and every commondir file inside one, skipping
+# dependency trees, as "device:inode path": a .git replaced by a new one at the
+# same path is a different entry. A commondir file makes git take its config
+# and hooks from the directory it names, so it counts as a pointer file. -mindepth 1
+# keeps a working directory that is itself called venv or target from being
+# pruned.
 find_git() {
-    find "$1" -maxdepth 6 \
+    find "$1" -mindepth 1 -maxdepth 6 \
         \( -name node_modules -o -name .venv -o -name venv -o -name target \) -prune \
-        -o -name .git -print 2>/dev/null | LC_ALL=C sort
+        -o \( -name .git -o -name commondir -path '*/.git/*' \) -printf '%D:%i %p\n' \
+        2>/dev/null | LC_ALL=C sort
 }
 
 # Checksums of the project files that agents, editors and direnv load code from
@@ -142,6 +163,39 @@ find_autorun() {
         find "$d"/.claude "$d"/.codex "$d"/.gemini "$d"/.qwen "$d"/.opencode \
             "$d"/.continue "$d"/.vscode -maxdepth 4 -type f -print0 || true
     } 2>/dev/null | xargs -0r sha256sum | LC_ALL=C sort
+}
+
+# Set hidden to the files under the working directory $1 that match a default
+# hide pattern but no default exception, or a --hide pattern; and no --show
+# pattern. .git and dependency trees are skipped. A matching
+# symlink hides the file it leads to, if that is in the working directory;
+# anything else it leads to isn't in the jail anyway.
+find_secrets() {
+    local d=$1 p f names=() keep=()
+    local -A seen=()
+    hidden=()
+    if ((hide_default)); then
+        for p in "${HIDE_DEFAULT[@]}"; do names+=(-o -name "$p"); done
+        names=(\( "${names[@]:1}" \))
+        for p in "${SHOW_DEFAULT[@]}"; do names+=(! -name "$p"); done
+        names=(-o \( "${names[@]}" \))
+    fi
+    for p in "${hide_patterns[@]}"; do names+=(-o -name "$p"); done
+    for p in "${show_patterns[@]}"; do keep+=(! -name "$p"); done
+    ((${#names[@]})) || return 0
+    while IFS= read -r -d '' f; do
+        if [[ -L $f ]]; then
+            f=$(readlink -f -- "$f") || continue
+            [[ $f == "$d"/* && -f $f ]] || continue
+        fi
+        [[ -n ${seen[$f]:-} ]] && continue
+        seen[$f]=1
+        hidden+=("$f")
+    done < <(find "$d" -mindepth 1 \
+                 \( -name .git -o -name node_modules -o -name .venv -o -name venv \
+                    -o -name target \) -prune \
+                 -o \( -type f -o -type l \) \( "${names[@]:1}" \) "${keep[@]}" -print0 \
+                 2>/dev/null)
 }
 
 # Shorten $HOME to ~ for display.
@@ -334,13 +388,30 @@ build_jail() {
     # filters, pagers) on the host the next time you type `git status` there. Make
     # the parts that can do that read-only for every repository in the directory.
     if [[ $git != off ]]; then
+        # First pin each .git directory, and every directory between it and the
+        # working directory, by binding it onto itself: a mount point can't be
+        # renamed, so the agent can't move a repository aside and git init a
+        # new one, with hooks of its choosing, in its place. Parents come first,
+        # so that no pin covers a mount made inside it.
+        local pins=() pin
         while IFS= read -r g; do
+            g=${g#* }
+            while [[ -n $g && $g != "$dir" ]]; do pins+=("$g"); g=${g%/*}; done
+        done <<<"$git_before"
+        if ((${#pins[@]})); then
+            while IFS= read -r -d '' pin; do
+                [[ -d $pin && ! -L $pin ]] && b+=(--bind "$pin" "$pin")
+            done < <(printf '%s\0' "${pins[@]}" | LC_ALL=C sort -zu)
+        fi
+        while IFS= read -r g; do
+            g=${g#* }
             [[ -n $g ]] || continue
             if [[ -L $g ]] || [[ -d $g && ( -L $g/hooks || -L $g/config ) ]]; then
                 ((force)) || die "$g (or its hooks/config) is a symlink; inspect it or use --force"
             fi
             if [[ -f $g || $git == ro ]]; then
-                # A pointer file must not be re-pointed at an agent-made git dir.
+                # A pointer file (.git or commondir) must not be re-pointed at
+                # an agent-made git dir.
                 b+=(--ro-bind "$g" "$g")
                 continue
             fi
@@ -357,6 +428,11 @@ build_jail() {
             done
         done <<<"$git_before"
     fi
+
+    # A secret file stays in place but becomes /dev/null on a nodev mount:
+    # opening it fails, and it can't be removed, renamed or linked. This comes
+    # after the pins above, which bind directories afresh from the host.
+    for f in "${hidden[@]}"; do b+=(--ro-bind /dev/null "$f"); done
 
     b+=(
         --chdir "$dir"
@@ -439,7 +515,7 @@ install_agent() {
     local dest=$tools_dir/$1 new=$tools_dir/.$1.new npm version
     npm=$(resolve npm) || die "npm is not installed (needed to install $a_title)"
 
-    cmd=() ro_paths=() state=() imports=() env=() path=() block_hosts=()
+    cmd=() ro_paths=() state=() imports=() env=() path=() block_hosts=() hidden=()
     use_node npm
     ro_paths+=("$(pkg_root "$npm" || echo "$npm")")
     cmd=("$node" "$npm" install --global --prefix "$new" --no-fund --no-audit
@@ -549,6 +625,26 @@ describe_jail() {
     printf '%s  %sFolder%s   %s\n' "$clear" "$dim" "$reset" "$(tilde "$work")"
     printf '%s  %sNetwork%s  %s\n' "$clear" "$dim" "$reset" "$n"
     printf '%s  %sGit%s      %s\n' "$clear" "$dim" "$reset" "$g"
+    printf '%s  %sSecrets%s  %s\n' "$clear" "$dim" "$reset" "$(describe_hidden)"
+}
+
+# The hidden files, relative to the working directory: the first three.
+hidden_names() {
+    local f out='' sep=''
+    for f in "${hidden[@]:0:3}"; do out+=$sep${f#"$work"/} sep=', '; done
+    ((${#hidden[@]} <= 3)) || out+=" and $((${#hidden[@]} - 3)) more"
+    echo "$out"
+}
+
+# Say which files are hidden, as the picker shows it.
+describe_hidden() {
+    if ((!hide_default && ${#hide_patterns[@]} == 0)); then
+        echo "nothing hidden (--no-hide)"
+    elif ((${#hidden[@]} == 0)); then
+        echo "no files to hide"
+    else
+        echo "hidden: $(hidden_names)"
+    fi
 }
 
 # Draw the whole picker with row $1 highlighted; menu_lines is its height.
@@ -564,7 +660,7 @@ draw_menu() {
     printf '%s\n' "$clear"
     printf '%s  %s↑/↓ choose · enter run · 1-%d or s pick · q quit%s\n' "$clear" "$dim" \
         "${#AGENTS[@]}" "$reset"
-    menu_lines=$((${#rows[@]} + 9))
+    menu_lines=$((${#rows[@]} + 10))
 }
 
 # Ask which agent to run, with the arrow keys (or by number on a terminal
@@ -764,7 +860,7 @@ check_setup() {
 # --- arguments --------------------------------------------------------------
 
 net=isolated git_mode=protect force=0 dry_run=0 inspect=0 list=0 check=0 install=
-host_ports=() extra_ro=()
+host_ports=() extra_ro=() hide_default=1 hide_patterns=() show_patterns=()
 while (($#)); do
     case $1 in
         --net)        net=${2:?--net needs a mode}; shift 2 ;;
@@ -775,6 +871,11 @@ while (($#)); do
         --git=*)      git_mode=${1#*=}; shift ;;
         --ro)         extra_ro+=("${2:?--ro needs a path}"); shift 2 ;;
         --ro=*)       extra_ro+=("${1#*=}"); shift ;;
+        --hide)       hide_patterns+=("${2:?--hide needs a pattern}"); shift 2 ;;
+        --hide=*)     hide_patterns+=("${1#*=}"); shift ;;
+        --show)       show_patterns+=("${2:?--show needs a pattern}"); shift 2 ;;
+        --show=*)     show_patterns+=("${1#*=}"); shift ;;
+        --no-hide)    hide_default=0 hide_patterns=(); shift ;;
         --install)    install=${2:?--install needs an agent}; shift 2 ;;
         --install=*)  install=${1#*=}; shift ;;
         --list)       list=1; shift ;;
@@ -796,6 +897,9 @@ for p in "${host_ports[@]}"; do
     if ! [[ $p =~ ^[0-9]+$ ]] || ((p < 1 || p > 65535)); then die "bad port: $p"; fi
 done
 ((${#host_ports[@]} == 0)) || [[ $net == isolated ]] || die "--host-port needs --net isolated"
+for p in "${hide_patterns[@]}" "${show_patterns[@]}"; do
+    [[ -n $p && $p != */* ]] || die "bad pattern: '$p' (patterns match file names, without a /)"
+done
 
 state_base=${AGENT_JAIL_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-jail}
 tools_dir=$state_base/tools
@@ -848,6 +952,7 @@ case $work/ in "$state_base"/*) die "refusing to run inside the agent-jail state
 if (($#)); then
     profile=$1; shift
 elif [[ -t 0 && -t 2 ]]; then
+    find_secrets "$work"
     pick_agent
 else
     usage >&2
@@ -869,6 +974,8 @@ cmd+=("$@")
 for p in "${extra_ro[@]}"; do ro_paths+=("$(readlink -e -- "$p")"); done
 
 git_before=$(find_git "$work")
+find_secrets "$work"
+((${#hidden[@]} == 0)) || say "hiding files that look like secrets (see --show): $(hidden_names)"
 autorun_before=$(find_autorun "$work")
 build_jail "$work" "$git_mode"
 [[ $net == host ]] && warn "--net host: the agent can reach every localhost service and the X11 server"
@@ -878,9 +985,10 @@ run_jail || status=$?
 ((dry_run)) && exit 0
 
 # Anything that git would execute on the host, created during the run.
-new_git=$(LC_ALL=C comm -13 <(printf '%s\n' "$git_before") <(find_git "$work") | sed '/^$/d')
+new_git=$(LC_ALL=C comm -13 <(printf '%s\n' "$git_before") <(find_git "$work") |
+          sed -e '/^$/d' -e 's/^[^ ]* //')
 if [[ -n $new_git ]]; then
-    warn "the agent created git metadata; its hooks and config run on the host when you use git there:"
+    warn "the agent created or replaced git metadata; its hooks and config run on the host when you use git there:"
     while IFS= read -r g; do printf '    %s\n' "$g" >&2; done <<<"$new_git"
     warn "inspect them first, e.g.: git -c core.hooksPath=/dev/null -c core.fsmonitor= status"
 fi
