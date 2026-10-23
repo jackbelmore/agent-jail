@@ -13,6 +13,7 @@ may be compromised. Assume it actively tries to get out.
 |---|---|
 | Files outside the working directory (SSH and GPG keys, browser profiles, password stores, other projects) | Not mounted. `$HOME` inside is an empty tmpfs; `/` is assembled from read-only `/usr` and a short list of `/etc` files. |
 | Secret files inside the working directory (`.env`, private keys, `.netrc`) | Found by name before the run and covered with `/dev/null` on a `nodev` mount: opening them fails, and they can't be replaced, renamed, deleted or hard-linked. A symlink with a secret's name hides its target. |
+| The jail's settings, in a project someone else wrote | A project's `.agent-jail` file can only make the jail stricter (a stricter `--net` or `--git`, more `--hide` patterns, lower limits); anything that would loosen it is ignored with a warning. A symlinked or unreadable one stops the run. |
 | Secrets in your shell environment | `--clearenv`; only `HOME`, `USER`, `PATH`, `TERM`, `LANG` and profile settings are set. |
 | Other runs of the same agent outside the jail | Agent state is private to the jail (`~/.local/share/agent-jail/<profile>`). The real config file is bound read-only. |
 | Your files, while an agent is installed | `--install` and the picker run `npm install` in a jail that can write only the new package directory, with the same network filter. The installed package is read-only to the agent, and its command is refused if it leads outside the install. |
