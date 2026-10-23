@@ -83,7 +83,8 @@ Read these before trusting the jail with anything.
 9. **`--net host`, `--git off`, `--ro`, `--force`, `--no-hide`, `--show`, `--seccomp off`.** Each one removes a protection
    on purpose.
 10. **The agents' own sandboxes.** Codex's and Copilot CLI's sandboxes can't run
-   inside the jail and start turned off there (see the README). The jail replaces it, but anything an
+   inside the jail and start turned off there (see
+   [the guide](GUIDE.md#supported-agents)). The jail replaces it, but anything an
    agent's own sandbox would have blocked *inside* the working directory, such as
    writes to particular files, is no longer blocked.
 

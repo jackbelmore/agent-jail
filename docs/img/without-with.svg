@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="t">
+  <title id="t">Without agent-jail, the agent can reach everything you can: SSH keys, saved passwords, other projects, cloud logins, your home router, apps on this PC and your terminal. With agent-jail, it gets this project and the public internet, and everything else is locked outside.</title>
+  <defs><style>
+    text { font-family: Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif; }
+    .lab { font-size: 15px; font-weight: 600; }
+    .bad { fill: none; stroke: #fda4af; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    .badbg { fill: #4c0519; stroke: #f43f5e; stroke-width: 2; } .badt { fill: #fecdd3; stroke: none; }
+    .off { fill: none; stroke: #64748b; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    .offbg { fill: #334155; } .offt { fill: #94a3b8; stroke: none; }
+    .good { fill: none; stroke: #86efac; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    .goodbg { fill: #052e16; stroke: #22c55e; stroke-width: 2; } .goodt { fill: #bbf7d0; stroke: none; }
+  </style>
+  <g id="lock"><rect x="-9" y="-3" width="18" height="14" rx="3" fill="#f43f5e"/><path d="M-5.5 -3 v-4 a5.5 5.5 0 0 1 11 0 v4" fill="none" stroke="#f43f5e" stroke-width="3"/></g>
+  </defs>
+  <rect width="1200" height="540" rx="20" fill="#0f172a"/>
+  <rect x="24" y="24" width="564" height="492" rx="16" fill="#1e293b" stroke="#f43f5e" stroke-opacity=".5" stroke-width="2"/>
+  <rect x="612" y="24" width="564" height="492" rx="16" fill="#1e293b" stroke="#22c55e" stroke-opacity=".5" stroke-width="2"/>
+  <text x="306" y="66" text-anchor="middle" font-size="24" font-weight="800" fill="#fda4af">Without agent-jail</text>
+  <text x="306" y="94" text-anchor="middle" font-size="16" fill="#cbd5e1">The agent can reach everything you can</text>
+  <text x="894" y="66" text-anchor="middle" font-size="24" font-weight="800" fill="#86efac">With agent-jail</text>
+  <text x="894" y="94" text-anchor="middle" font-size="16" fill="#cbd5e1">It gets this project and the internet. That's all.</text>
+
+<line x1="306" y1="310" x2="306" y2="170" stroke="#f43f5e" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+<line x1="306" y1="310" x2="451" y2="211" stroke="#f43f5e" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+<line x1="306" y1="310" x2="511" y2="310" stroke="#f43f5e" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+<line x1="306" y1="310" x2="451" y2="409" stroke="#f43f5e" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+<line x1="306" y1="310" x2="306" y2="450" stroke="#f43f5e" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+<line x1="306" y1="310" x2="161" y2="409" stroke="#f43f5e" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+<line x1="306" y1="310" x2="101" y2="310" stroke="#f43f5e" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+<line x1="306" y1="310" x2="161" y2="211" stroke="#f43f5e" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+<circle cx="306" cy="310" r="62" fill="#1e293b"/>
+<g transform="translate(306 314) scale(0.85)">
+    <line x1="0" y1="-58" x2="0" y2="-44" stroke="#cbd5e1" stroke-width="4"/><circle cx="0" cy="-62" r="7" fill="#fbbf24"/>
+    <rect x="-34" y="-44" width="68" height="52" rx="14" fill="#e2e8f0"/><rect x="-24" y="-32" width="48" height="26" rx="9" fill="#0f172a"/>
+    <circle cx="-11" cy="-19" r="5" fill="#2dd4bf"/><circle cx="11" cy="-19" r="5" fill="#2dd4bf"/>
+    <rect x="-28" y="14" width="56" height="44" rx="10" fill="#a78bfa"/><circle cx="0" cy="34" r="7" fill="#ede9fe"/>
+    <line x1="-28" y1="24" x2="-44" y2="40" stroke="#a78bfa" stroke-width="8" stroke-linecap="round"/>
+    <line x1="28" y1="24" x2="44" y2="40" stroke="#a78bfa" stroke-width="8" stroke-linecap="round"/></g>
+<g transform="translate(306 170)"><circle r="27" class="badbg"/><g class="bad"><circle cx="-7" cy="0" r="8"/><path d="M1 0 h15 M11 0 v6 M16 0 v4"/></g><text y="-38" text-anchor="middle" class="lab badt">SSH keys</text></g>
+<g transform="translate(451 211)"><circle r="27" class="badbg"/><g class="bad"><rect x="-15" y="-9" width="30" height="18" rx="4"/><path d="M-8 0 h0 M0 0 h0 M8 0 h0" stroke-width="5"/></g><text y="48" text-anchor="middle" class="lab badt">saved passwords</text></g>
+<g transform="translate(511 310)"><circle r="27" class="badbg"/><g class="bad"><path d="M-14 -9 h9 l4 4 h15 v15 h-28 z"/></g><text y="48" text-anchor="middle" class="lab badt">other projects</text></g>
+<g transform="translate(451 409)"><circle r="27" class="badbg"/><g class="bad"><path d="M-11 9 a7 7 0 0 1 -1 -14 a9 9 0 0 1 17 -1 a6.5 6.5 0 0 1 2 15 z"/></g><text y="48" text-anchor="middle" class="lab badt">cloud logins</text></g>
+<g transform="translate(306.0 446.0)"><path d="M-30 -20 a5 5 0 0 1 5 -5 h18 l7 7 h25 a5 5 0 0 1 5 5 v36 a5 5 0 0 1 -5 5 h-50 a5 5 0 0 1 -5 -5 z" fill="#fbbf24"/><rect x="-30" y="-12" width="60" height="38" rx="5" fill="#fcd34d"/></g><text x="306" y="490" text-anchor="middle" class="lab" fill="#fde68a">this project</text>
+<g transform="translate(161 409)"><circle r="27" class="badbg"/><g class="bad"><rect x="-14" y="-12" width="28" height="19" rx="3"/><path d="M-6 13 h12 M0 7 v6"/></g><text y="48" text-anchor="middle" class="lab badt">apps on this PC</text></g>
+<g transform="translate(101 310)"><circle r="27" class="badbg"/><g class="bad"><rect x="-15" y="-11" width="30" height="22" rx="4"/><path d="M-9 -4 l5 4 l-5 4 M1 5 h8"/></g><text y="48" text-anchor="middle" class="lab badt">your terminal</text></g>
+<g transform="translate(161 211)"><circle r="27" class="badbg"/><g class="bad"><path d="M-14 2 L0 -11 L14 2 M-9 -2 v14 h18 v-14"/></g><text y="48" text-anchor="middle" class="lab badt">home router</text></g>
+<rect x="728" y="226" width="300" height="168" rx="22" fill="none" stroke="#2dd4bf" stroke-opacity=".25" stroke-width="12"/>
+<rect x="728" y="226" width="300" height="168" rx="22" fill="#2dd4bf" fill-opacity=".10" stroke="#2dd4bf" stroke-width="3"/>
+<text x="878" y="216" text-anchor="middle" font-size="13" font-weight="700" fill="#5eead4" letter-spacing="2">THE JAIL</text>
+<path d="M1000 226 C 1020 196, 1050 180, 1072 176" fill="none" stroke="#22c55e" stroke-width="3"/>
+<g transform="translate(808 316) scale(0.8)">
+    <line x1="0" y1="-58" x2="0" y2="-44" stroke="#cbd5e1" stroke-width="4"/><circle cx="0" cy="-62" r="7" fill="#fbbf24"/>
+    <rect x="-34" y="-44" width="68" height="52" rx="14" fill="#e2e8f0"/><rect x="-24" y="-32" width="48" height="26" rx="9" fill="#0f172a"/>
+    <circle cx="-11" cy="-19" r="5" fill="#2dd4bf"/><circle cx="11" cy="-19" r="5" fill="#2dd4bf"/>
+    <rect x="-28" y="14" width="56" height="44" rx="10" fill="#a78bfa"/><circle cx="0" cy="34" r="7" fill="#ede9fe"/>
+    <line x1="-28" y1="24" x2="-44" y2="40" stroke="#a78bfa" stroke-width="8" stroke-linecap="round"/>
+    <line x1="28" y1="24" x2="44" y2="40" stroke="#a78bfa" stroke-width="8" stroke-linecap="round"/></g>
+<g transform="translate(940 300)"><path d="M-30 -20 a5 5 0 0 1 5 -5 h18 l7 7 h25 a5 5 0 0 1 5 5 v36 a5 5 0 0 1 -5 5 h-50 a5 5 0 0 1 -5 -5 z" fill="#fbbf24"/><rect x="-30" y="-12" width="60" height="38" rx="5" fill="#fcd34d"/><text y="48" text-anchor="middle" class="lab" fill="#fde68a">this project</text></g>
+<g transform="translate(1100 172)"><circle r="27" class="goodbg"/><g class="good"><circle r="13"/><ellipse rx="6" ry="13"/><path d="M-13 0 h26"/></g><text y="-38" text-anchor="middle" class="lab goodt">public internet</text></g>
+<g transform="translate(680 172)"><circle r="27" class="offbg"/><g class="off"><circle cx="-7" cy="0" r="8"/><path d="M1 0 h15 M11 0 v6 M16 0 v4"/></g><use href="#lock" x="20" y="16"/><text y="-38" text-anchor="middle" class="lab offt">SSH keys</text></g>
+<g transform="translate(810 172)"><circle r="27" class="offbg"/><g class="off"><rect x="-15" y="-9" width="30" height="18" rx="4"/><path d="M-8 0 h0 M0 0 h0 M8 0 h0" stroke-width="5"/></g><use href="#lock" x="20" y="16"/><text y="-38" text-anchor="middle" class="lab offt">saved passwords</text></g>
+<g transform="translate(950 172)"><circle r="27" class="offbg"/><g class="off"><path d="M-14 -9 h9 l4 4 h15 v15 h-28 z"/></g><use href="#lock" x="20" y="16"/><text y="-38" text-anchor="middle" class="lab offt">other projects</text></g>
+<g transform="translate(680 456)"><circle r="27" class="offbg"/><g class="off"><path d="M-11 9 a7 7 0 0 1 -1 -14 a9 9 0 0 1 17 -1 a6.5 6.5 0 0 1 2 15 z"/></g><use href="#lock" x="20" y="16"/><text y="48" text-anchor="middle" class="lab offt">cloud logins</text></g>
+<g transform="translate(810 456)"><circle r="27" class="offbg"/><g class="off"><path d="M-14 2 L0 -11 L14 2 M-9 -2 v14 h18 v-14"/></g><use href="#lock" x="20" y="16"/><text y="48" text-anchor="middle" class="lab offt">home router</text></g>
+<g transform="translate(950 456)"><circle r="27" class="offbg"/><g class="off"><rect x="-14" y="-12" width="28" height="19" rx="3"/><path d="M-6 13 h12 M0 7 v6"/></g><use href="#lock" x="20" y="16"/><text y="48" text-anchor="middle" class="lab offt">apps on this PC</text></g>
+<g transform="translate(1100 456)"><circle r="27" class="offbg"/><g class="off"><rect x="-15" y="-11" width="30" height="22" rx="4"/><path d="M-9 -4 l5 4 l-5 4 M1 5 h8"/></g><use href="#lock" x="20" y="16"/><text y="48" text-anchor="middle" class="lab offt">your terminal</text></g>
+</svg>
