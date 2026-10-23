@@ -512,6 +512,87 @@ def test_without_a_terminal_no_profile_prints_usage(jail):
     assert "Usage:" in r.stderr
 
 
+# --- config files -----------------------------------------------------------
+
+def user_config(jail, text: str) -> None:
+    cfg = jail.home / ".config" / "agent-jail" / "config"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(text)
+
+
+@needs_pasta
+def test_user_config_sets_defaults_and_the_command_line_wins(jail):
+    (jail.work / "token.secret").write_text("canary-custom\n")
+    user_config(jail, "# my settings\nnet = none\n\n  hide = *.secret  \n")
+    r = jail.run("--dry-run", "shell", net="")
+    assert "pasta" not in r.stdout
+    assert "token.secret" in r.stdout  # hidden
+    r = jail.run("--dry-run", "--net", "isolated", "shell", net="")
+    assert "pasta" in r.stdout
+
+
+@pytest.mark.parametrize("text, error", [
+    ("force\n", "unknown setting"),
+    ("install = codex\n", "unknown setting"),
+    ("net\n", "no value"),
+    ("net =\n", "needs a value"),
+    ("memory = lots\n", "--memory must be"),
+])
+def test_user_config_errors_stop_the_run(jail, text, error):
+    user_config(jail, text)
+    r = jail.sh("echo ran")
+    assert r.returncode != 0 and "ran" not in r.stdout
+    assert error in r.stderr
+
+
+@needs_pasta
+def test_project_file_can_make_the_jail_stricter(jail):
+    (jail.work / "token.secret").write_text("canary-custom\n")
+    (jail.work / ".agent-jail").write_text("net = none\ngit = ro\nhide = *.secret\n")
+    r = jail.run("--dry-run", "--net", "isolated", "--host-port", "11434", "shell", net="")
+    assert "pasta" not in r.stdout
+    assert "makes the jail stricter: net none, git ro, hide *.secret, no host ports" in r.stderr
+    r = jail.sh("cat token.secret; git -c user.name=t -c user.email=t@example.com "
+                "commit -q --allow-empty -m x && echo committed")
+    assert "canary" not in r.stdout and "committed" not in r.stdout
+
+
+@needs_pasta
+def test_project_file_cannot_loosen_the_jail(jail, host_tcp_server):
+    plant_secrets(jail.work)
+    (jail.work / ".agent-jail").write_text(
+        f"net = host\ngit = off\nhost-port = {host_tcp_server}\nro = /etc\n"
+        "show = .env\nno-hide\nmemory = off\ntasks = off\n")
+    r = jail.sh(py(CONNECT, "127.0.0.1", str(host_tcp_server)) + "; cat .env; "
+                "echo x > .git/hooks/pre-commit; ls /etc/shadow", net="isolated")
+    assert r.stdout.split() == ["REFUSED"], r.stderr
+    assert "Read-only file system" in r.stderr and "Permission denied" in r.stderr
+    for setting in ["net = host", "git = off", f"host-port = {host_tcp_server}", "ro = /etc",
+                    "show = .env", "no-hide", "memory = off", "tasks = off"]:
+        assert f"ignoring '{setting}' in .agent-jail" in r.stderr
+
+
+@needs_systemd
+def test_project_file_can_only_lower_limits(jail):
+    jail.with_user_session()
+    (jail.work / ".agent-jail").write_text("memory = 1G\ntasks = 100000\n")
+    r = jail.run("--dry-run", "--memory", "2G", "shell", net="none")
+    assert "MemoryMax=1G" in r.stdout and "TasksMax=4096" in r.stdout
+    assert "ignoring 'tasks = 100000'" in r.stderr
+
+
+def test_bad_or_symlinked_project_file_stops_the_run(jail, tmp_path):
+    (jail.work / ".agent-jail").write_text("net = nowhere\n")
+    r = jail.sh("echo ran")
+    assert "ran" not in r.stdout and ".agent-jail:1: net must be" in r.stderr
+
+    (jail.work / ".agent-jail").unlink()
+    (tmp_path / "elsewhere").write_text("net = none\n")
+    (jail.work / ".agent-jail").symlink_to(tmp_path / "elsewhere")
+    r = jail.sh("echo ran")
+    assert "ran" not in r.stdout and "not a symlink" in r.stderr
+
+
 # --- refusals and arguments -------------------------------------------------
 
 @pytest.mark.parametrize("where", ["home", "ssh", "toplevel"])

@@ -9,6 +9,10 @@
   each one, so the agent can't read, change, rename or delete it. Templates such
   as `.env.example` stay visible. `--hide PATTERN` hides more, `--show PATTERN`
   keeps a file visible, and `--no-hide` turns it off.
+- Config files: `~/.config/agent-jail/config` sets options you always want
+  (`net = none`, `hide = *.secret`, `memory = 8G`), and the command line wins
+  over it. A project's `.agent-jail` file uses the same format but can only make
+  the jail stricter; settings that would loosen it are ignored with a warning.
 - Memory and process limits: with a systemd user session, the jail runs in a
   scope with at most 50% of RAM (no swap) and 4096 processes and threads.
   `--memory SIZE|PERCENT|off` and `--tasks N|off` change them. Without systemd

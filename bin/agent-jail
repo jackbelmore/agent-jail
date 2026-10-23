@@ -90,6 +90,11 @@ Options:
 
 $hide
 
+Options can also go in \${XDG_CONFIG_HOME:-~/.config}/agent-jail/config, one
+per line as "name = value" (net = none, hide = *.secret, memory = 8G) or just
+"name" (no-hide); the command line wins. A project's .agent-jail file uses the
+same format but can only make the jail stricter.
+
 Agent state lives in \${AGENT_JAIL_HOME:-\${XDG_DATA_HOME:-~/.local/share}/agent-jail}/PROFILE,
 never in the agent's normal config directories. Agents installed with
 --install live in its tools/ directory and are used before any on your PATH.
@@ -920,7 +925,140 @@ check_setup() {
     ((ok))
 }
 
+# --- configuration files ------------------------------------------------------
+
+# The options a config file may set: "name=" takes a value, "name" is a switch.
+readonly CONFIG_KEYS=" net= host-port= git= ro= hide= show= no-hide memory= tasks= "
+
+# Set cfg_keys, cfg_values and cfg_where (file:line) to the settings in config
+# file $1. Each line is "name = value", or just "name" for a switch; a line
+# starting with # is a comment.
+read_config() {
+    local file=$1 line key value n=0 where
+    cfg_keys=() cfg_values=() cfg_where=()
+    while IFS= read -r line || [[ -n $line ]]; do
+        n=$((n + 1))
+        where="$(tilde "$file"):$n"
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        [[ -z $line || $line == '#'* ]] && continue
+        if [[ $line == *=* ]]; then
+            key=${line%%=*} value=${line#*=}
+            key=${key%"${key##*[![:space:]]}"}
+            value=${value#"${value%%[![:space:]]*}"}
+            [[ $CONFIG_KEYS == *" $key= "* ]] || die "$where: unknown setting: $key"
+            [[ -n $value ]] || die "$where: $key needs a value"
+        else
+            key=$line value=''
+            [[ $CONFIG_KEYS == *" $key "* ]] || die "$where: unknown setting, or no value: $key"
+        fi
+        cfg_keys+=("$key") cfg_values+=("$value") cfg_where+=("$where")
+    done < <(head -c 65536 -- "$file")
+}
+
+# How strict each --net and --git mode is, from the loosest up.
+net_rank() { case $1 in host) echo 0 ;; isolated) echo 1 ;; none) echo 9 ;; esac; }
+git_rank() { case $1 in off) echo 0 ;; protect) echo 1 ;; ro) echo 2 ;; esac; }
+
+# A --memory or --tasks value as a number to compare; off is the most.
+amount() {
+    local v=$1 kib
+    case $v in
+        off) echo $((1 << 62)) ;;
+        *%)  kib=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
+             echo $((kib * 1024 * ${v%\%} / 100)) ;;
+        *K)  echo $((${v%K} << 10)) ;;
+        *M)  echo $((${v%M} << 20)) ;;
+        *G)  echo $((${v%G} << 30)) ;;
+        *T)  echo $((${v%T} << 40)) ;;
+        *)   echo "$v" ;;
+    esac
+}
+
+# Apply the project's .agent-jail on top of the user's settings. Anyone who can
+# write the project can write this file, the agent included, so a setting in
+# it only counts when it makes the jail stricter: a stricter --net or --git,
+# more --hide patterns, lower --memory and --tasks. Anything else is ignored
+# with a warning. A file that can't be read as settings stops the run.
+apply_project_config() {
+    local file=$work/.agent-jail i key value where applied=() ignored=() x
+    [[ -e $file || -L $file ]] || return 0
+    [[ -f $file && ! -L $file ]] || die "$file must be a regular file, not a symlink"
+    read_config "$file"
+    for i in "${!cfg_keys[@]}"; do
+        key=${cfg_keys[i]} value=${cfg_values[i]} where=${cfg_where[i]}
+        case $key in
+            net)
+                [[ -n $(net_rank "$value") ]] || die "$where: net must be isolated, none or host"
+                if (($(net_rank "$value") > $(net_rank "$net"))); then
+                    net=$value applied+=("net $value")
+                elif [[ $value != "$net" ]]; then
+                    ignored+=("net = $value")
+                fi ;;
+            git)
+                [[ -n $(git_rank "$value") ]] || die "$where: git must be protect, ro or off"
+                if (($(git_rank "$value") > $(git_rank "$git_mode"))); then
+                    git_mode=$value applied+=("git $value")
+                elif [[ $value != "$git_mode" ]]; then
+                    ignored+=("git = $value")
+                fi ;;
+            hide)
+                [[ $value != */* ]] || die "$where: bad pattern: '$value' (no / allowed)"
+                hide_patterns+=("$value") applied+=("hide $value") ;;
+            memory)
+                [[ $value =~ ^([1-9][0-9]*[KMGT]?|([1-9][0-9]?|100)%|off)$ ]] ||
+                    die "$where: memory must be a size such as 8G or a percentage such as 50%"
+                if (($(amount "$value") < $(amount "$memory"))); then
+                    memory=$value applied+=("memory $value")
+                elif [[ $value != "$memory" ]]; then
+                    ignored+=("memory = $value")
+                fi ;;
+            tasks)
+                [[ $value =~ ^([1-9][0-9]*|off)$ ]] || die "$where: tasks must be a number"
+                if (($(amount "$value") < $(amount "$tasks"))); then
+                    tasks=$value applied+=("tasks $value")
+                elif [[ $value != "$tasks" ]]; then
+                    ignored+=("tasks = $value")
+                fi ;;
+            *)  ignored+=("$key${value:+ = $value}") ;;
+        esac
+    done
+    # Host ports only exist with --net isolated.
+    if [[ $net != isolated ]] && ((${#host_ports[@]})); then
+        host_ports=() applied+=("no host ports")
+    fi
+    if ((${#applied[@]})); then
+        x=$(printf ', %s' "${applied[@]}")
+        say "the project's .agent-jail makes the jail stricter: ${x:2}"
+    fi
+    for x in "${ignored[@]}"; do
+        warn "ignoring '$x' in .agent-jail: a project's file can only make the jail stricter"
+    done
+}
+
+# Work out the --memory and --tasks limits; say so if they were asked for and
+# can't be enforced.
+setup_limits() {
+    use_limits
+    if ((limits_asked)) && [[ $limits_off == none:* ]]; then
+        warn "running without --memory and --tasks limits (${limits_off#none: })"
+    fi
+}
+
 # --- arguments --------------------------------------------------------------
+
+# Settings from the user's config file go in front of the command line's, so
+# the command line wins.
+user_config=${XDG_CONFIG_HOME:-$HOME/.config}/agent-jail/config
+if [[ -e $user_config ]]; then
+    [[ -f $user_config ]] || die "$(tilde "$user_config") is not a regular file"
+    read_config "$user_config"
+    config_args=()
+    for i in "${!cfg_keys[@]}"; do
+        config_args+=("--${cfg_keys[i]}${cfg_values[i]:+=${cfg_values[i]}}")
+    done
+    set -- "${config_args[@]}" "$@"
+fi
 
 net=isolated git_mode=protect force=0 dry_run=0 inspect=0 list=0 check=0 install=
 host_ports=() extra_ro=() hide_default=1 hide_patterns=() show_patterns=()
@@ -1007,12 +1145,8 @@ if [[ $tiocsti != 0 ]]; then
     warn "TIOCSTI is enabled on this kernel; starting a new session (window resizes may not reach the agent)"
 fi
 
-use_limits
-if ((limits_asked)) && [[ $limits_off == none:* ]]; then
-    warn "running without --memory and --tasks limits (${limits_off#none: })"
-fi
-
 if [[ -n $install ]]; then
+    setup_limits
     install_agent "$install"
     exit 0
 fi
@@ -1024,6 +1158,8 @@ if [[ -n $reason ]]; then
 fi
 case $state_base/ in "$work"/*) die "the agent-jail state directory is inside $work" ;; esac
 case $work/ in "$state_base"/*) die "refusing to run inside the agent-jail state directory" ;; esac
+apply_project_config
+setup_limits
 
 if (($#)); then
     profile=$1; shift

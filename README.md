@@ -386,6 +386,38 @@ Options go before the profile, and also apply to the picker: `agent-jail --net
 none` lists the agents and runs the one you choose without a network. ARGS go to
 the agent, so `agent-jail codex exec "fix the tests"` works as you'd expect.
 
+### Config files
+
+Options you always want can go in `~/.config/agent-jail/config` (or under
+`$XDG_CONFIG_HOME`), one per line, named as on the command line without the
+dashes:
+
+```ini
+# ~/.config/agent-jail/config
+host-port = 11434
+hide = *.secret
+hide = terraform.tfstate
+memory = 8G
+```
+
+Options on the command line win over the file. `net`, `git`, `memory` and
+`tasks` take the last value given; `host-port`, `ro`, `hide` and `show` add up.
+
+A project can have its own `.agent-jail` file in the same format, but it can only
+make the jail **stricter**, because whoever wrote the project (or the agent, in an
+earlier run) wrote that file too:
+
+| In `.agent-jail` | Counts when |
+|---|---|
+| `net = none`, `net = isolated` | it's stricter than the network you chose (`host` < `isolated` < `none`) |
+| `git = ro`, `git = protect` | it's stricter (`off` < `protect` < `ro`) |
+| `hide = PATTERN` | always: it hides more |
+| `memory = SIZE`, `tasks = N` | it's lower than your limit |
+| `host-port`, `ro`, `show`, `no-hide` | never: these loosen the jail, so they're ignored with a warning |
+
+`agent-jail` says what the project's file changed before the agent starts. A file
+it can't read as settings, or a symlink in place of one, stops the run.
+
 It refuses to start in `$HOME` or any directory above it, in top-level and
 mount-root directories, and inside `~/.ssh`, `~/.config`, `~/.local` and similar.
 Set `AGENT_JAIL_HOME` to keep the jail's state somewhere other than
