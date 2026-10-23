@@ -60,6 +60,7 @@ Options:
   --shell           start bash inside PROFILE's sandbox instead of the agent,
                     to see exactly what the agent would see
   --list            list the agents and whether they are installed
+  --check           check that everything agent-jail needs is installed
   --install NAME    install or update NAME's npm package for the jail; npm
                     and the package's install scripts run inside a jail too
   --force           run in a directory that is normally refused
@@ -478,9 +479,10 @@ install_agent() {
 # Set the colour variables for output on file descriptor $1.
 colours() {
     if [[ -t $1 && -z ${NO_COLOR:-} && ${TERM:-dumb} != dumb ]]; then
-        bold=$'\e[1m' dim=$'\e[2m' green=$'\e[32m' cyan=$'\e[36m' reset=$'\e[0m'
+        bold=$'\e[1m' dim=$'\e[2m' red=$'\e[31m' green=$'\e[32m' cyan=$'\e[36m'
+        reset=$'\e[0m'
     else
-        bold='' dim='' green='' cyan='' reset=''
+        bold='' dim='' red='' green='' cyan='' reset=''
     fi
 }
 
@@ -639,9 +641,129 @@ offer_install() {
     install_agent "$profile"
 }
 
+# --- checking the setup -----------------------------------------------------
+
+passed() { printf '  %s✓%s %s\n' "$green" "$reset" "$*"; }
+failed() { printf '  %s✗ %s%s\n' "$red" "$*" "$reset"; }
+noted()  { printf '  %s○ %s%s\n' "$dim" "$*" "$reset"; }
+
+# The command that installs the given tools (bwrap pasta nft node) here.
+install_command() {
+    local id='' pkgs=() t
+    # shellcheck disable=SC1091
+    [[ -r /etc/os-release ]] && id=$(. /etc/os-release; echo " $ID ${ID_LIKE:-} ")
+    for t; do
+        case $t in
+            bwrap) pkgs+=(bubblewrap) ;;
+            pasta) pkgs+=(passt) ;;
+            nft)   pkgs+=(nftables) ;;
+            node)  case $id in *" fedora "*|*" rhel "*) pkgs+=(npm) ;; *) pkgs+=(nodejs npm) ;; esac ;;
+        esac
+    done
+    case $id in
+        *" fedora "*|*" rhel "*)   echo "sudo dnf install ${pkgs[*]}" ;;
+        *" debian "*|*" ubuntu "*) echo "sudo apt install ${pkgs[*]}" ;;
+        *" arch "*)                echo "sudo pacman -S ${pkgs[*]}" ;;
+        *)                         echo "install these packages: ${pkgs[*]}" ;;
+    esac
+}
+
+# Check everything agent-jail needs, end by starting a real jail, and say how
+# to get whatever is missing. Fails if a jail can't start.
+check_setup() {
+    local ok=1 can_jail=0 missing=() v npm_v dir out test_net=none
+    local self
+    self=$(readlink -f -- "${BASH_SOURCE[0]}")
+    colours 1
+    printf '\n  %sagent-jail%s %s\n\n' "$bold" "$reset" "$VERSION"
+
+    if command -v bwrap >/dev/null; then
+        v=$(bwrap --version 2>/dev/null) || v=
+        v=${v##* }
+        if [[ $(printf '%s\n' 0.8 "$v" | sort -V | head -n1) == 0.8 ]]; then
+            passed "bubblewrap $v"
+        else
+            failed "bubblewrap ${v:-(unknown version)} is older than 0.8"
+            ok=0
+        fi
+        if bwrap --unshare-user --ro-bind / / true 2>/dev/null; then
+            passed "unprivileged user namespaces"
+            can_jail=1
+        else
+            failed "bubblewrap can't create a user namespace"
+            if [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null) == 1 ]]
+            then
+                printf '      AppArmor blocks them: sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0\n'
+            fi
+            ok=0
+        fi
+    else
+        failed "bubblewrap (bwrap) is missing"
+        missing+=(bwrap)
+        ok=0
+    fi
+
+    if find_tool pasta >/dev/null && find_tool nft >/dev/null; then
+        passed "pasta and nft, for --net isolated (the default)"
+        test_net=isolated
+    else
+        find_tool pasta >/dev/null || missing+=(pasta)
+        find_tool nft >/dev/null || missing+=(nft)
+        failed "pasta or nft is missing, so only --net none works"
+        ok=0
+    fi
+
+    if command -v node >/dev/null && command -v npm >/dev/null; then
+        v=$(node --version 2>/dev/null) || v=
+        npm_v=$(npm --version 2>/dev/null) || npm_v=
+        passed "node ${v#v} and npm $npm_v, for installing and running agents"
+    else
+        noted "node and npm are missing; agents installed by agent-jail need them"
+        missing+=(node)
+    fi
+
+    if [[ $(cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null || echo 1) != 0 ]]; then
+        noted "TIOCSTI is on, so agents run in a new session (window resizes may not reach them)"
+    fi
+
+    if ((can_jail)); then
+        dir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/agent-jail-check.XXXXXX")
+        if out=$(cd "$dir" && "$self" --net "$test_net" shell -c 'test ! -e ~/.ssh' \
+                     </dev/null 2>&1); then
+            passed "a test jail starts (--net $test_net)"
+        else
+            failed "a test jail didn't start:"
+            printf '%s\n' "$out" | sed 's/^/      /'
+            ok=0
+        fi
+        rm -rf -- "$dir"
+    fi
+
+    # Run from a checkout, the fix is ./install.sh; run from an installed copy,
+    # it's putting that copy's directory on PATH.
+    local on_path=1 fix
+    fix="add $(tilde "${self%/*}") to your PATH"
+    [[ -e ${self%/*}/../install.sh ]] && fix="run ./install.sh"
+    if ! command -v agent-jail >/dev/null; then
+        noted "agent-jail isn't on your PATH yet"
+        on_path=0
+    fi
+
+    echo
+    if ((${#missing[@]})); then
+        printf '  To install what is missing:\n\n      %s\n\n' "$(install_command "${missing[@]}")"
+    fi
+    if ((ok && on_path)); then
+        printf '  %sReady.%s Run %sagent-jail%s in a project folder.\n\n' "$green" "$reset" "$bold" "$reset"
+    elif ((ok)); then
+        printf '  %sThe jail works.%s To run agent-jail anywhere, %s.\n\n' "$green" "$reset" "$fix"
+    fi
+    ((ok))
+}
+
 # --- arguments --------------------------------------------------------------
 
-net=isolated git_mode=protect force=0 dry_run=0 inspect=0 list=0 install=
+net=isolated git_mode=protect force=0 dry_run=0 inspect=0 list=0 check=0 install=
 host_ports=() extra_ro=()
 while (($#)); do
     case $1 in
@@ -656,6 +778,7 @@ while (($#)); do
         --install)    install=${2:?--install needs an agent}; shift 2 ;;
         --install=*)  install=${1#*=}; shift ;;
         --list)       list=1; shift ;;
+        --check)      check=1; shift ;;
         --force)      force=1; shift ;;
         --shell)      inspect=1; shift ;;
         --dry-run)    dry_run=1; shift ;;
@@ -677,6 +800,11 @@ done
 state_base=${AGENT_JAIL_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-jail}
 tools_dir=$state_base/tools
 work=$(pwd -P)
+
+if ((check)); then
+    check_setup
+    exit
+fi
 
 if ((list)); then
     colours 1
