@@ -9,6 +9,15 @@
   each one, so the agent can't read, change, rename or delete it. Templates such
   as `.env.example` stay visible. `--hide PATTERN` hides more, `--show PATTERN`
   keeps a file visible, and `--no-hide` turns it off.
+- A seccomp filter, on by default on x86_64 and aarch64: it refuses
+  `TIOCSTI` and `TIOCLINUX` terminal injection, `ptrace` and other ways into
+  other processes, the kernel keyring (shared with your login session),
+  `io_uring`, `bpf`, `userfaultfd`, `perf_event_open`, and calls that need
+  capabilities the jail lacks. bash assembles it at run time from a table, with
+  no build step or precompiled file; `--print-seccomp` prints it, and
+  [docs/SECCOMP.md](docs/SECCOMP.md) explains it line by line. Where it is on,
+  agents no longer start in a new session on kernels that allow `TIOCSTI`.
+  `--seccomp off` turns it off, for debuggers.
 - Config files: `~/.config/agent-jail/config` sets options you always want
   (`net = none`, `hide = *.secret`, `memory = 8G`), and the command line wins
   over it. A project's `.agent-jail` file uses the same format but can only make

@@ -222,6 +222,7 @@ sequenceDiagram
 | `/run/user` (D-Bus, Wayland, PipeWire) | absent |
 | Network (`--net isolated`, the default) | own network namespace via [pasta]; nftables rejects loopback, RFC 1918, CGNAT/Tailscale, link-local and multicast; public internet works |
 | Processes | own PID namespace; can't create user namespaces; no capabilities |
+| System calls | a seccomp filter refuses terminal injection (`TIOCSTI`), `ptrace`, the kernel keyring, `io_uring`, `bpf` and others agents don't need ([docs/SECCOMP.md](docs/SECCOMP.md)) |
 | Memory and processes | at most half the RAM and 4096 processes and threads, through a systemd scope (`--memory`, `--tasks`) |
 
 ### Secret files in the project
@@ -375,6 +376,7 @@ agent-jail [options] [PROFILE [ARGS...]]
   --hide PATTERN             also hide project files named like PATTERN
   --show PATTERN             don't hide files named like PATTERN
   --no-hide                  hide no files, not even .env and keys
+  --seccomp on|off           the seccomp filter (default on; off lets debuggers work)
   --memory SIZE|PERCENT|off  memory limit (default 50% of RAM)
   --tasks N|off              process and thread limit (default 4096)
   --shell                    run bash with the profile's sandbox instead
@@ -412,6 +414,7 @@ earlier run) wrote that file too:
 | `net = none`, `net = isolated` | it's stricter than the network you chose (`host` < `isolated` < `none`) |
 | `git = ro`, `git = protect` | it's stricter (`off` < `protect` < `ro`) |
 | `hide = PATTERN` | always: it hides more |
+| `seccomp = on` | always (`seccomp = off` is ignored) |
 | `memory = SIZE`, `tasks = N` | it's lower than your limit |
 | `host-port`, `ro`, `show`, `no-hide` | never: these loosen the jail, so they're ignored with a warning |
 
@@ -441,7 +444,10 @@ hook or `core.fsmonitor`, re-pointing a worktree's `.git` file, planting a plugi
 in the agent's config, following a symlink planted at an import path, an npm
 install script reading secrets or writing outside its new package, changing a
 project's Claude Code hooks or MCP servers, reaching a host TCP service and a host
-abstract socket, and connecting to private address ranges. Others drive the picker
+abstract socket, connecting to private address ranges, and calling `ptrace`,
+`keyctl`, `io_uring` and `TIOCSTI` past the seccomp filter, whose numbers are also
+checked against the kernel headers and whose program is run through a small BPF
+interpreter for both architectures. Others drive the picker
 on a real pseudo-terminal. CI runs them on Ubuntu 24.04 together with shellcheck,
 ruff and gitleaks.
 

@@ -24,6 +24,30 @@ readonly SHOW_DEFAULT=('*.example' '*.sample' '*.template' '*.dist')
 # Default --memory and --tasks: room for an agent and a big build, but not for
 # a runaway process to take the whole machine.
 readonly MEMORY_DEFAULT=50% TASKS_DEFAULT=4096
+
+# System calls the seccomp filter refuses: name|x86_64 number|generic (aarch64)
+# number|errno. Why each one, and how the filter is built: docs/SECCOMP.md.
+# tests/test_seccomp.py checks the numbers against the kernel headers.
+readonly SECCOMP_DENY=(
+    # Other processes' memory, system calls and file descriptors
+    "ptrace|101|117|EPERM" "process_vm_readv|310|270|EPERM"
+    "process_vm_writev|311|271|EPERM" "kcmp|312|272|EPERM" "pidfd_getfd|438|438|EPERM"
+    # The session keyring, shared with your login session
+    "add_key|248|217|EPERM" "request_key|249|218|EPERM" "keyctl|250|219|EPERM"
+    # Kernel attack surface no agent needs
+    "bpf|321|280|EPERM" "perf_event_open|298|241|EPERM" "userfaultfd|323|282|EPERM"
+    "io_uring_setup|425|425|ENOSYS" "io_uring_enter|426|426|ENOSYS"
+    "io_uring_register|427|427|ENOSYS"
+    # Calls that need capabilities the jail doesn't have, refused up front
+    "mount|165|40|EPERM" "umount2|166|39|EPERM" "pivot_root|155|41|EPERM"
+    "open_tree|428|428|EPERM" "move_mount|429|429|EPERM" "fsopen|430|430|EPERM"
+    "fsconfig|431|431|EPERM" "fsmount|432|432|EPERM" "fspick|433|433|EPERM"
+    "mount_setattr|442|442|EPERM" "init_module|175|105|EPERM"
+    "finit_module|313|273|EPERM" "delete_module|176|106|EPERM"
+    "kexec_load|246|104|EPERM" "kexec_file_load|320|294|EPERM" "reboot|169|142|EPERM"
+    "swapon|167|224|EPERM" "swapoff|168|225|EPERM" "acct|163|89|EPERM"
+    "syslog|103|116|EPERM" "quotactl|179|60|EPERM" "open_by_handle_at|304|265|EPERM"
+)
 prog=${0##*/}
 
 # Agents agent-jail knows how to find and install, in the order the picker
@@ -69,6 +93,9 @@ Options:
                     ro        all of .git read-only (no commits inside)
                     off       no extra git protection
   --ro PATH         also expose PATH read-only (repeatable)
+  --seccomp MODE    on   refuse TIOCSTI, ptrace, keyctl, io_uring and other
+                         system calls agents don't need (default)
+                    off  no seccomp filter (debuggers work)
   --memory SIZE     memory the jail may use: bytes with K, M, G or T, a
                     percentage of RAM, or off (default $MEMORY_DEFAULT)
   --tasks N         processes and threads the jail may run, or off
@@ -85,6 +112,8 @@ Options:
                     and the package's install scripts run inside a jail too
   --force           run in a directory that is normally refused
   --dry-run         print the sandbox command instead of running it
+  --print-seccomp [ARCH]
+                    write the seccomp filter (classic BPF) to stdout
   -h, --help        show this help
   --version         print the version
 
@@ -386,6 +415,56 @@ describe_limits() {
     echo "$m memory, $t"
 }
 
+# --- seccomp ----------------------------------------------------------------
+
+# Append one classic BPF instruction (code, jt, jf, k) to bpf, as the
+# little-endian struct sock_filter the kernel reads.
+bpf_op() {
+    local x
+    printf -v x '\\x%02x' $(($1 & 255)) $(($1 >> 8)) "$2" "$3" \
+        $(($4 & 255)) $(($4 >> 8 & 255)) $(($4 >> 16 & 255)) $(($4 >> 24 & 255))
+    bpf+=$x
+}
+
+# Write the seccomp filter for architecture $1 (x86_64 or aarch64) to stdout.
+# The program, instruction by instruction, is in docs/SECCOMP.md.
+seccomp_filter() {
+    local arch col line name x86 generic errno nr ioctl
+    local -r LD=0x20 JEQ=0x15 JGE=0x35 RET=0x06            # BPF_LD|W|ABS, BPF_JMP|K, BPF_RET|K
+    local -r KILL=0x80000000 ALLOW=0x7fff0000 ERRNO=0x50000 # SECCOMP_RET_*
+    case $1 in
+        x86_64)  arch=0xc000003e col=x86 ioctl=16 ;;        # AUDIT_ARCH_X86_64
+        aarch64) arch=0xc00000b7 col=generic ioctl=29 ;;    # AUDIT_ARCH_AARCH64
+        *)       return 1 ;;
+    esac
+    bpf=''
+    bpf_op $LD 0 0 4                    # the calling ABI
+    bpf_op $JEQ 1 0 $arch
+    bpf_op $RET 0 0 $KILL               # i386 or arm32 calls from a 64-bit process
+    bpf_op $LD 0 0 0                    # the system call number
+    if [[ $1 == x86_64 ]]; then
+        bpf_op $JGE 0 1 0x40000000
+        bpf_op $RET 0 0 $KILL           # the x32 ABI
+    fi
+    for line in "${SECCOMP_DENY[@]}"; do
+        IFS='|' read -r name x86 generic errno <<<"$line"
+        if [[ $col == x86 ]]; then nr=$x86; else nr=$generic; fi
+        bpf_op $JEQ 0 1 "$nr"
+        if [[ $errno == ENOSYS ]]; then
+            bpf_op $RET 0 0 $((ERRNO | 38))
+        else
+            bpf_op $RET 0 0 $((ERRNO | 1))   # EPERM
+        fi
+    done
+    bpf_op $JEQ 0 4 $ioctl
+    bpf_op $LD 0 0 24                   # low 32 bits of the ioctl command
+    bpf_op $JEQ 1 0 0x5412              # TIOCSTI
+    bpf_op $JEQ 0 1 0x541c              # TIOCLINUX
+    bpf_op $RET 0 0 $((ERRNO | 1))
+    bpf_op $RET 0 0 $ALLOW
+    printf '%b' "$bpf"
+}
+
 # --- the sandbox ------------------------------------------------------------
 
 # Set run to the command that starts cmd in a jail on directory $1, with git
@@ -511,11 +590,23 @@ build_jail() {
     for kv in "${env[@]}"; do b+=(--setenv "${kv%%=*}" "${kv#*=}"); done
     [[ $net != none ]] && b+=(--share-net)
     # TIOCSTI lets a process push keystrokes into its terminal, which the shell
-    # would run after the jail exits. Kernels since 6.2 can turn it off; if it is
-    # still on, detach the agent from the terminal instead.
-    ((tiocsti)) && b+=(--new-session)
+    # would run after the jail exits. Kernels since 6.2 can turn it off, and the
+    # seccomp filter refuses it; failing both, detach the agent from the
+    # terminal instead.
+    if [[ -n $seccomp_arch ]]; then
+        b+=(--seccomp 3)
+    elif ((tiocsti)); then
+        b+=(--new-session)
+    fi
 
     run=(bwrap "${b[@]}" -- "${cmd[@]}")
+    if [[ -n $seccomp_arch ]]; then
+        seccomp_filter "$seccomp_arch" >"$tmp/seccomp.bpf"
+        # Opened just before bwrap starts, because pasta closes inherited files.
+        # shellcheck disable=SC2016  # $1/$@ are for the inner sh
+        run=(/usr/bin/sh -c 'f=$1 && shift && exec "$@" 3<"$f"' agent-jail-seccomp
+             "$tmp/seccomp.bpf" "${run[@]}")
+    fi
 
     if [[ $net == isolated ]]; then
         pasta=$(find_tool pasta) || die "--net isolated needs pasta (passt package); or choose --net none"
@@ -886,8 +977,13 @@ check_setup() {
         noted "no systemd user session, so the jail runs without memory and task limits"
     fi
 
-    if [[ $(cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null || echo 1) != 0 ]]; then
-        noted "TIOCSTI is on, so agents run in a new session (window resizes may not reach them)"
+    if seccomp_filter "$(uname -m)" >/dev/null; then
+        passed "a seccomp filter for $(uname -m)"
+    else
+        noted "no seccomp filter for $(uname -m), only x86_64 and aarch64"
+        if [[ $(cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null || echo 1) != 0 ]]; then
+            noted "TIOCSTI is on, so agents run in a new session (window resizes may not reach them)"
+        fi
     fi
 
     if ((can_jail)); then
@@ -928,7 +1024,7 @@ check_setup() {
 # --- configuration files ------------------------------------------------------
 
 # The options a config file may set: "name=" takes a value, "name" is a switch.
-readonly CONFIG_KEYS=" net= host-port= git= ro= hide= show= no-hide memory= tasks= "
+readonly CONFIG_KEYS=" net= host-port= git= ro= hide= show= no-hide seccomp= memory= tasks= "
 
 # Set cfg_keys, cfg_values and cfg_where (file:line) to the settings in config
 # file $1. Each line is "name = value", or just "name" for a switch; a line
@@ -1002,6 +1098,13 @@ apply_project_config() {
                 elif [[ $value != "$git_mode" ]]; then
                     ignored+=("git = $value")
                 fi ;;
+            seccomp)
+                case $value in on|off) ;; *) die "$where: seccomp must be on or off" ;; esac
+                if [[ $value == on && $seccomp == off ]]; then
+                    seccomp=on applied+=("seccomp on")
+                elif [[ $value != "$seccomp" ]]; then
+                    ignored+=("seccomp = $value")
+                fi ;;
             hide)
                 [[ $value != */* ]] || die "$where: bad pattern: '$value' (no / allowed)"
                 hide_patterns+=("$value") applied+=("hide $value") ;;
@@ -1045,6 +1148,22 @@ setup_limits() {
     fi
 }
 
+# Set seccomp_arch to the architecture to build the seccomp filter for, or
+# leave it empty with --seccomp off or where there is no filter for this one.
+setup_seccomp() {
+    seccomp_arch=''
+    if [[ $seccomp == on ]]; then
+        if seccomp_filter "$(uname -m)" >/dev/null; then
+            seccomp_arch=$(uname -m)
+        else
+            warn "no seccomp filter for $(uname -m); running without one"
+        fi
+    fi
+    if [[ -z $seccomp_arch ]] && ((tiocsti)); then
+        warn "TIOCSTI is enabled on this kernel; starting a new session (window resizes may not reach the agent)"
+    fi
+}
+
 # --- arguments --------------------------------------------------------------
 
 # Settings from the user's config file go in front of the command line's, so
@@ -1062,7 +1181,7 @@ fi
 
 net=isolated git_mode=protect force=0 dry_run=0 inspect=0 list=0 check=0 install=
 host_ports=() extra_ro=() hide_default=1 hide_patterns=() show_patterns=()
-memory=$MEMORY_DEFAULT tasks=$TASKS_DEFAULT limits_asked=0
+memory=$MEMORY_DEFAULT tasks=$TASKS_DEFAULT limits_asked=0 seccomp=on
 while (($#)); do
     case $1 in
         --net)        net=${2:?--net needs a mode}; shift 2 ;;
@@ -1078,6 +1197,11 @@ while (($#)); do
         --show)       show_patterns+=("${2:?--show needs a pattern}"); shift 2 ;;
         --show=*)     show_patterns+=("${1#*=}"); shift ;;
         --no-hide)    hide_default=0 hide_patterns=(); shift ;;
+        --seccomp)    seccomp=${2:?--seccomp needs on or off}; shift 2 ;;
+        --seccomp=*)  seccomp=${1#*=}; shift ;;
+        --print-seccomp)
+            seccomp_filter "${2:-$(uname -m)}" || die "no seccomp filter for ${2:-$(uname -m)}"
+            exit 0 ;;
         --memory)     memory=${2:?--memory needs a size}; limits_asked=1; shift 2 ;;
         --memory=*)   memory=${1#*=}; limits_asked=1; shift ;;
         --tasks)      tasks=${2:?--tasks needs a number}; limits_asked=1; shift 2 ;;
@@ -1099,6 +1223,7 @@ done
 
 case $net in isolated|none|host) ;; *) die "--net must be isolated, none or host" ;; esac
 case $git_mode in protect|ro|off) ;; *) die "--git must be protect, ro or off" ;; esac
+case $seccomp in on|off) ;; *) die "--seccomp must be on or off" ;; esac
 for p in "${host_ports[@]}"; do
     if ! [[ $p =~ ^[0-9]+$ ]] || ((p < 1 || p > 65535)); then die "bad port: $p"; fi
 done
@@ -1140,13 +1265,11 @@ cleanup() {
 trap cleanup EXIT
 
 tiocsti=$(cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null || echo 1)
-if [[ $tiocsti != 0 ]]; then
-    tiocsti=1
-    warn "TIOCSTI is enabled on this kernel; starting a new session (window resizes may not reach the agent)"
-fi
+[[ $tiocsti == 0 ]] || tiocsti=1
 
 if [[ -n $install ]]; then
     setup_limits
+    setup_seccomp
     install_agent "$install"
     exit 0
 fi
@@ -1160,6 +1283,7 @@ case $state_base/ in "$work"/*) die "the agent-jail state directory is inside $w
 case $work/ in "$state_base"/*) die "refusing to run inside the agent-jail state directory" ;; esac
 apply_project_config
 setup_limits
+setup_seccomp
 
 if (($#)); then
     profile=$1; shift

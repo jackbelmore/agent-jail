@@ -24,7 +24,8 @@ may be compromised. Assume it actively tries to get out.
 | Inbound exposure | pasta's automatic port forwarding (`-t`, `-u`, `-T`, `-U`, all `auto` by default) is set to `none`. |
 | Other processes | PID namespace; no capabilities; nested user namespaces disabled (`--disable-userns`). |
 | Your machine's memory and process table | With a systemd user session, the jail and pasta run in a scope with `MemoryMax` (50% of RAM), `MemorySwapMax=0` and `TasksMax` (4096). The jail's tmpfs `/tmp` and `$HOME` are charged to it. |
-| Your terminal input | If the kernel still allows `TIOCSTI` keystroke injection, the agent is started in a new session. |
+| Your terminal input | A seccomp filter refuses the `TIOCSTI` and `TIOCLINUX` ioctls, comparing only the 32 bits the kernel uses. Without the filter (`--seccomp off`, or not x86_64 or aarch64), the agent is started in a new session if the kernel still allows `TIOCSTI`. |
+| Keys in your login session's keyring | The jail shares the session keyring; the filter refuses `keyctl`, `add_key` and `request_key`. |
 
 ## What is not protected
 
@@ -59,9 +60,12 @@ Read these before trusting the jail with anything.
 5. **Your terminal.** The agent writes to your terminal, so terminal escape
    sequences (for example OSC 52 clipboard writes, if your terminal allows them)
    reach the host.
-6. **Kernel and bubblewrap bugs.** There is no seccomp filter beyond bubblewrap's
-   own. A kernel privilege escalation from an unprivileged user namespace defeats
-   the jail.
+6. **Kernel and bubblewrap bugs.** A kernel privilege escalation reachable from
+   an unprivileged user namespace defeats the jail. The seccomp filter removes
+   some of the usual routes (`io_uring`, `userfaultfd`, `bpf`,
+   `perf_event_open`), not all: the agent still makes almost every other system
+   call, and with `--seccomp off`, or on an architecture other than x86_64 and
+   aarch64, there is no filter at all.
 7. **Resource exhaustion.** Memory and task limits need a systemd user manager
    with the memory and pids controllers delegated (the default with cgroup v2);
    without one, there are none, and `--check` says so. CPU time and disk space
@@ -70,7 +74,7 @@ Read these before trusting the jail with anything.
 8. **Public addresses of things you own.** Only private ranges are blocked. A LAN
    device with a global IPv6 address, or a host service bound to all interfaces and
    reachable on one of the host's public addresses, can still be reached.
-9. **`--net host`, `--git off`, `--ro`, `--force`, `--no-hide`, `--show`.** Each one removes a protection
+9. **`--net host`, `--git off`, `--ro`, `--force`, `--no-hide`, `--show`, `--seccomp off`.** Each one removes a protection
    on purpose.
 10. **The agents' own sandboxes.** Codex's sandbox can't run inside the jail and
    starts turned off there (see the README). The jail replaces it, but anything an
