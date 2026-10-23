@@ -15,6 +15,8 @@ set -euo pipefail
 
 readonly VERSION=0.2.0
 readonly DNS_ADDR=169.254.1.1     # address pasta answers DNS on, inside the jail
+readonly PROXY_PORT=3128          # the --allow-host forwarder, inside the jail
+readonly PROXY_SOCKET=/tmp/.agent-jail-proxy   # the proxy's socket, inside the jail
 # File names hidden in the project unless --no-hide, and the ones among them
 # that stay visible: templates, not secrets. --hide and --show add to these.
 readonly HIDE_DEFAULT=(.env '.env.*' '*.pem' '*.key' '*.p12' '*.pfx' '*.jks' '*.keystore'
@@ -86,6 +88,9 @@ Options:
                     none      no network at all
                     host      share the host network (UNSAFE: localhost
                               services and X11 become reachable)
+  --allow-host NAME with --net isolated, reach only NAME over HTTPS, through a
+                    proxy that refuses names resolving to private addresses:
+                    example.com, *.example.com, example.com:8443 (repeatable)
   --host-port PORT  with --net isolated, forward 127.0.0.1:PORT inside the
                     jail to 127.0.0.1:PORT on the host, e.g. 11434 for a local
                     Ollama (repeatable)
@@ -465,6 +470,205 @@ seccomp_filter() {
     printf '%b' "$bpf"
 }
 
+# --- the --allow-host proxy --------------------------------------------------
+# Design: docs/ALLOW_HOST.md. Both programs use only Python's standard library.
+
+# The proxy, on the host: CONNECT only, to names on the list whose addresses
+# are all public. Arguments: socket path, log path, parent pid, then the list
+# as name:port, where a name may start with "*.".
+proxy_py() {
+    cat <<'EOF'
+import asyncio, ctypes, ipaddress, os, re, signal, socket, sys
+
+RULES = []  # (name, port), from the arguments
+NAME = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*")
+NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def listed(host, port):
+    return any(p == port and (host == n or n.startswith("*.") and host.endswith(n[1:]))
+               for n, p in RULES)
+
+
+def public(addr):
+    ip = ipaddress.ip_address(addr.split("%")[0])
+    if ip.version == 6:  # IPv4 addresses inside IPv6 ones count as themselves
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        elif ip in NAT64:
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        elif ip.sixtofour:
+            ip = ip.sixtofour
+    return ip.is_global and not ip.is_multicast
+
+
+async def refuse(writer, status, target, why):
+    log.write(f"deny {target} {why}\n")
+    writer.write(f"HTTP/1.1 {status}\r\nContent-Type: text/plain\r\n"
+                 f"Connection: close\r\n\r\nagent-jail: {why}\n".encode())
+    await writer.drain()
+
+
+async def pipe(reader, writer):
+    try:
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+        if writer.can_write_eof():
+            writer.write_eof()
+    except OSError:
+        pass
+
+
+async def handle(reader, writer):
+    target = "?"
+    try:
+        try:
+            head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 30)
+            method, target, _ = head.split(b"\r\n", 1)[0].decode("latin-1").split(" ", 2)
+        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError,
+                ValueError):
+            return await refuse(writer, "400 Bad Request", target, "not an HTTP request")
+        if method != "CONNECT":
+            return await refuse(writer, "405 Method Not Allowed", target,
+                                "only HTTPS (CONNECT) goes through the proxy")
+        host, _, port = target.rpartition(":")
+        host = host.lower().rstrip(".")
+        if not port.isdigit() or not 0 < int(port) < 65536:
+            return await refuse(writer, "400 Bad Request", target, "no port")
+        port = int(port)
+        try:
+            ipaddress.ip_address(host.strip("[]"))
+            return await refuse(writer, "403 Forbidden", target,
+                                "an IP address; only names on the --allow-host list")
+        except ValueError:
+            pass
+        if len(host) > 253 or not NAME.fullmatch(host):
+            return await refuse(writer, "400 Bad Request", target, "not a host name")
+        if not listed(host, port):
+            return await refuse(writer, "403 Forbidden", target, "not on the --allow-host list")
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(
+                host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            return await refuse(writer, "502 Bad Gateway", target, "the name doesn't resolve")
+        addrs = list(dict.fromkeys(info[4][0] for info in infos))
+        private = [a for a in addrs if not public(a)]
+        if private:
+            return await refuse(writer, "403 Forbidden", target,
+                                f"resolves to a non-public address, {private[0]}")
+        for addr in addrs:  # the checked addresses, not the name again
+            try:
+                up_r, up_w = await asyncio.wait_for(asyncio.open_connection(addr, port), 10)
+                break
+            except (OSError, TimeoutError):
+                continue
+        else:
+            return await refuse(writer, "502 Bad Gateway", target, "can't connect")
+        log.write(f"allow {target} {addrs[0]}\n")
+        writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        await writer.drain()
+        await asyncio.gather(pipe(reader, up_w), pipe(up_r, writer))
+        up_w.close()
+    except Exception as e:  # one bad connection must not stop the proxy
+        log.write(f"error {target} {e!r}\n")
+    finally:
+        writer.close()
+
+
+async def main(sock):
+    # Listen first, then rename into place: once the socket exists, it works.
+    server = await asyncio.start_unix_server(handle, path=sock + ".new", limit=16384)
+    os.chmod(sock + ".new", 0o600)
+    os.rename(sock + ".new", sock)
+    async with server:
+        await server.serve_forever()
+
+
+if __name__ == "__main__":
+    sock, log_path, parent, *entries = sys.argv[1:]
+    signal.signal(signal.SIGINT, signal.SIG_IGN)   # Ctrl-C is for the agent
+    ctypes.CDLL(None).prctl(1, signal.SIGTERM)     # PR_SET_PDEATHSIG: end with agent-jail
+    if os.getppid() != int(parent):
+        sys.exit(0)
+    RULES[:] = [(e.rsplit(":", 1)[0], int(e.rsplit(":", 1)[1])) for e in entries]
+    log = open(log_path, "a", buffering=1)
+    asyncio.run(main(sock))
+EOF
+}
+
+# The forwarder, inside the jail: 127.0.0.1:PORT to the proxy's socket, for
+# clients that only talk to proxies over TCP. It returns once it is listening.
+# Arguments: socket path, port.
+forwarder_py() {
+    cat <<'EOF'
+import os, signal, socket, sys, threading
+
+path, port = sys.argv[1], int(sys.argv[2])
+srv = socket.create_server(("127.0.0.1", port), backlog=1024)
+if os.fork():
+    os._exit(0)
+os.setsid()                                    # out of the terminal's reach
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+null = os.open(os.devnull, os.O_RDWR)
+for fd in (0, 1, 2):
+    os.dup2(null, fd)
+
+
+def pump(src, dst):
+    try:
+        while data := src.recv(65536):
+            dst.sendall(data)
+    except OSError:
+        pass
+    try:
+        dst.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+
+
+def serve(conn):
+    with conn, socket.socket(socket.AF_UNIX) as up:
+        try:
+            up.connect(path)
+        except OSError:
+            return
+        back = threading.Thread(target=pump, args=(up, conn))
+        back.start()
+        pump(conn, up)
+        back.join()
+
+
+while True:
+    conn, _ = srv.accept()
+    threading.Thread(target=serve, args=(conn,), daemon=True).start()
+EOF
+}
+
+# Start the proxy for allow_hosts on $tmp/proxy.sock, and wait until it listens.
+start_proxy() {
+    local i
+    python3 -I -c "$(proxy_py)" "$tmp/proxy.sock" "$tmp/proxy.log" "$$" "${allow_hosts[@]}" \
+        </dev/null 2>"$tmp/proxy.err" &
+    proxy_pid=$!
+    for ((i = 0; i < 200; i++)); do
+        [[ -S $tmp/proxy.sock ]] && return 0
+        kill -0 "$proxy_pid" 2>/dev/null || break
+        sleep 0.025
+    done
+    die "the --allow-host proxy didn't start: $(tail -n 3 -- "$tmp/proxy.err")"
+}
+
+# After the run, list what the proxy refused.
+report_proxy() {
+    local refused
+    [[ -f $tmp/proxy.log ]] || return 0
+    refused=$(awk '$1 == "deny" && !seen[$2]++ { $1 = ""; print "   " $0 }' "$tmp/proxy.log")
+    [[ -n $refused ]] || return 0
+    warn "the --allow-host proxy refused:"
+    printf '%s\n' "$refused" >&2
+}
+
 # --- the sandbox ------------------------------------------------------------
 
 # Set run to the command that starts cmd in a jail on directory $1, with git
@@ -492,6 +696,11 @@ build_jail() {
         isolated) printf 'nameserver %s\n' "$DNS_ADDR" >"$tmp/resolv.conf"
                   b+=(--ro-bind "$tmp/resolv.conf" /etc/resolv.conf) ;;
         host)     b+=(--ro-bind-try "$(readlink -f /etc/resolv.conf)" /etc/resolv.conf) ;;
+        allowlist)
+            # No resolver in the jail: names are resolved by the proxy, on the
+            # host. Lookups fail at once rather than time out.
+            printf 'nameserver 127.0.0.1\n' >"$tmp/resolv.conf"
+            b+=(--ro-bind "$tmp/resolv.conf" /etc/resolv.conf) ;;
     esac
     b+=(
         --proc /proc
@@ -515,6 +724,7 @@ build_jail() {
         b+=(--ro-bind-try "$HOME/$rel" "$HOME/$rel")
     done
     b+=(--bind "$dir" "$dir")
+    [[ $net == allowlist ]] && b+=(--bind "$tmp/proxy.sock" "$PROXY_SOCKET")
 
     # Git runs hooks and config-defined commands (core.fsmonitor, core.hooksPath,
     # filters, pagers) on the host the next time you type `git status` there. Make
@@ -587,8 +797,15 @@ build_jail() {
         --setenv TMPDIR /tmp
         --setenv AGENT_JAIL "$profile"
     )
+    if [[ $net == allowlist ]]; then
+        for kv in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy; do
+            b+=(--setenv "$kv" "http://127.0.0.1:$PROXY_PORT")
+        done
+        b+=(--setenv NO_PROXY "localhost,127.0.0.1,::1" --setenv no_proxy "localhost,127.0.0.1,::1"
+            --setenv NODE_USE_ENV_PROXY 1)
+    fi
     for kv in "${env[@]}"; do b+=(--setenv "${kv%%=*}" "${kv#*=}"); done
-    [[ $net != none ]] && b+=(--share-net)
+    [[ $net == isolated || $net == host ]] && b+=(--share-net)
     # TIOCSTI lets a process push keystrokes into its terminal, which the shell
     # would run after the jail exits. Kernels since 6.2 can turn it off, and the
     # seccomp filter refuses it; failing both, detach the agent from the
@@ -599,7 +816,14 @@ build_jail() {
         b+=(--new-session)
     fi
 
-    run=(bwrap "${b[@]}" -- "${cmd[@]}")
+    if [[ $net == allowlist ]]; then
+        # shellcheck disable=SC2016  # $1/$@ are for the inner sh
+        run=(bwrap "${b[@]}" -- /usr/bin/sh -c \
+             'python3 -I -c "$1" "$2" "$3" && shift 3 && exec "$@"' agent-jail-forwarder \
+             "$(forwarder_py)" "$PROXY_SOCKET" "$PROXY_PORT" "${cmd[@]}")
+    else
+        run=(bwrap "${b[@]}" -- "${cmd[@]}")
+    fi
     if [[ -n $seccomp_arch ]]; then
         seccomp_filter "$seccomp_arch" >"$tmp/seccomp.bpf"
         # Opened just before bwrap starts, because pasta closes inherited files.
@@ -652,6 +876,7 @@ run_jail() {
         printf '%q ' "${run[@]}"; echo
         return 0
     fi
+    [[ $net == allowlist ]] && start_proxy
     trap ':' INT
     "${run[@]}" || status=$?
     trap - INT
@@ -765,6 +990,8 @@ describe_jail() {
     case $net in
         isolated) n="public internet only; not localhost, the LAN or a tailnet"
                   ((${#host_ports[@]} == 0)) || n+="; host port ${host_ports[*]}" ;;
+        allowlist) n=$(printf ', %s' "${allow_hosts[@]}")
+                   n="only ${n:2}, over HTTPS" ;;
         none)     n="none" ;;
         host)     n="${bold}shared with the host (unsafe)${reset}" ;;
     esac
@@ -951,6 +1178,12 @@ check_setup() {
         ok=0
     fi
 
+    if command -v python3 >/dev/null; then
+        passed "python3, for --allow-host"
+    else
+        noted "python3 is missing, so --allow-host won't work"
+    fi
+
     if find_tool pasta >/dev/null && find_tool nft >/dev/null; then
         passed "pasta and nft, for --net isolated (the default)"
         test_net=isolated
@@ -1024,7 +1257,7 @@ check_setup() {
 # --- configuration files ------------------------------------------------------
 
 # The options a config file may set: "name=" takes a value, "name" is a switch.
-readonly CONFIG_KEYS=" net= host-port= git= ro= hide= show= no-hide seccomp= memory= tasks= "
+readonly CONFIG_KEYS=" net= allow-host= host-port= git= ro= hide= show= no-hide seccomp= memory= tasks= "
 
 # Set cfg_keys, cfg_values and cfg_where (file:line) to the settings in config
 # file $1. Each line is "name = value", or just "name" for a switch; a line
@@ -1053,7 +1286,7 @@ read_config() {
 }
 
 # How strict each --net and --git mode is, from the loosest up.
-net_rank() { case $1 in host) echo 0 ;; isolated) echo 1 ;; none) echo 9 ;; esac; }
+net_rank() { case $1 in host) echo 0 ;; isolated) echo 1 ;; allowlist) echo 2 ;; none) echo 9 ;; esac; }
 git_rank() { case $1 in off) echo 0 ;; protect) echo 1 ;; ro) echo 2 ;; esac; }
 
 # A --memory or --tasks value as a number to compare; off is the most.
@@ -1077,15 +1310,20 @@ amount() {
 # more --hide patterns, lower --memory and --tasks. Anything else is ignored
 # with a warning. A file that can't be read as settings stops the run.
 apply_project_config() {
-    local file=$work/.agent-jail i key value where applied=() ignored=() x
+    local file=$work/.agent-jail i key value where applied=() ignored=() x hosts=() h
+    local -A ours=()
     [[ -e $file || -L $file ]] || return 0
     [[ -f $file && ! -L $file ]] || die "$file must be a regular file, not a symlink"
     read_config "$file"
     for i in "${!cfg_keys[@]}"; do
         key=${cfg_keys[i]} value=${cfg_values[i]} where=${cfg_where[i]}
         case $key in
+            allow-host)
+                h=$(host_entry "$value") || die "$where: bad allow-host: $value"
+                hosts+=("$h") ;;
             net)
-                [[ -n $(net_rank "$value") ]] || die "$where: net must be isolated, none or host"
+                [[ $value != allowlist && -n $(net_rank "$value") ]] ||
+                    die "$where: net must be isolated, none or host"
                 if (($(net_rank "$value") > $(net_rank "$net"))); then
                     net=$value applied+=("net $value")
                 elif [[ $value != "$net" ]]; then
@@ -1126,6 +1364,19 @@ apply_project_config() {
             *)  ignored+=("$key${value:+ = $value}") ;;
         esac
     done
+    # A list of hosts narrows any network but none: to the project's list, or
+    # to the hosts on both lists.
+    if ((${#hosts[@]})) && [[ $net != none ]]; then
+        if [[ $net == allowlist ]]; then
+            for h in "${allow_hosts[@]}"; do ours[$h]=1; done
+            allow_hosts=()
+            for h in "${hosts[@]}"; do [[ -n ${ours[$h]:-} ]] && allow_hosts+=("$h"); done
+            applied+=("only hosts on both lists")
+        else
+            net=allowlist allow_hosts=("${hosts[@]}") applied+=("allow-host ${hosts[*]}")
+        fi
+    fi
+    [[ $net == allowlist ]] || allow_hosts=()
     # Host ports only exist with --net isolated.
     if [[ $net != isolated ]] && ((${#host_ports[@]})); then
         host_ports=() applied+=("no host ports")
@@ -1164,6 +1415,19 @@ setup_seccomp() {
     fi
 }
 
+# An --allow-host entry, lower-cased, as name:port (443 by default); fails if
+# it isn't a host name or *.name, with an optional port.
+host_entry() {
+    local e=${1,,} name port=443
+    name=${e%:*}
+    [[ $e == *:* ]] && port=${e##*:}
+    [[ $port =~ ^[1-9][0-9]{0,4}$ ]] && ((port < 65536)) || return 1
+    [[ ${name#\*.} =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$ ]] ||
+        return 1
+    [[ ! ${name#\*.} =~ ^[0-9.]+$ ]] || return 1   # an IPv4 address
+    echo "$name:$port"
+}
+
 # --- arguments --------------------------------------------------------------
 
 # Settings from the user's config file go in front of the command line's, so
@@ -1180,12 +1444,14 @@ if [[ -e $user_config ]]; then
 fi
 
 net=isolated git_mode=protect force=0 dry_run=0 inspect=0 list=0 check=0 install=
-host_ports=() extra_ro=() hide_default=1 hide_patterns=() show_patterns=()
+host_ports=() allow_hosts=() extra_ro=() hide_default=1 hide_patterns=() show_patterns=()
 memory=$MEMORY_DEFAULT tasks=$TASKS_DEFAULT limits_asked=0 seccomp=on
 while (($#)); do
     case $1 in
         --net)        net=${2:?--net needs a mode}; shift 2 ;;
         --net=*)      net=${1#*=}; shift ;;
+        --allow-host) allow_hosts+=("${2:?--allow-host needs a name}"); shift 2 ;;
+        --allow-host=*) allow_hosts+=("${1#*=}"); shift ;;
         --host-port)  host_ports+=("${2:?--host-port needs a port}"); shift 2 ;;
         --host-port=*) host_ports+=("${1#*=}"); shift ;;
         --git)        git_mode=${2:?--git needs a mode}; shift 2 ;;
@@ -1228,6 +1494,15 @@ for p in "${host_ports[@]}"; do
     if ! [[ $p =~ ^[0-9]+$ ]] || ((p < 1 || p > 65535)); then die "bad port: $p"; fi
 done
 ((${#host_ports[@]} == 0)) || [[ $net == isolated ]] || die "--host-port needs --net isolated"
+if ((${#allow_hosts[@]})); then
+    [[ $net == isolated ]] || die "--allow-host needs --net isolated"
+    ((${#host_ports[@]} == 0)) || die "--allow-host and --host-port can't be used together"
+    for i in "${!allow_hosts[@]}"; do
+        allow_hosts[i]=$(host_entry "${allow_hosts[i]}") ||
+            die "bad --allow-host: ${allow_hosts[i]} (a name such as example.com or *.example.com, with an optional :port)"
+    done
+    net=allowlist
+fi
 [[ $memory =~ ^([1-9][0-9]*[KMGT]?|([1-9][0-9]?|100)%|off)$ ]] ||
     die "--memory must be a size such as 8G, a percentage such as 50%, or off"
 [[ $tasks =~ ^([1-9][0-9]*|off)$ ]] || die "--tasks must be a number or off"
@@ -1258,6 +1533,7 @@ command -v bwrap >/dev/null || die "bubblewrap (bwrap) is not installed"
 tmp=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/agent-jail.XXXXXX")
 menu_open=0
 cleanup() {
+    [[ -n ${proxy_pid:-} ]] && kill "$proxy_pid" 2>/dev/null
     rm -rf -- "$tmp"
     # Restore the cursor and line wrap if the picker was left with q, Esc or Ctrl-C.
     if ((menu_open)); then printf '\e[?25h\e[?7h' >&2; fi
@@ -1319,6 +1595,8 @@ build_jail "$work" "$git_mode"
 status=0
 run_jail || status=$?
 ((dry_run)) && exit 0
+
+report_proxy
 
 # Anything that git would execute on the host, created during the run.
 new_git=$(LC_ALL=C comm -13 <(printf '%s\n' "$git_before") <(find_git "$work") |

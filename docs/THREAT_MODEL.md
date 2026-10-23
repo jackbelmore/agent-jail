@@ -21,6 +21,7 @@ may be compromised. Assume it actively tries to get out.
 | Services on the host's loopback (local model servers, web UIs, databases) | Separate network namespace; only ports passed with `--host-port` are forwarded. |
 | Your desktop session (X11, Wayland, D-Bus, PipeWire, systemd user manager) | `/run/user` is not mounted; abstract sockets such as X11's are unreachable from a separate network namespace. |
 | The LAN, router, tailnet, cloud metadata endpoints | nftables in the jail's namespace rejects 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 (except the DNS forwarder), 127/8, multicast, IPv6 ULA and link-local. |
+| Hosts you didn't list, with `--allow-host` | No network namespace route out; one Unix socket to a host-side proxy that allows `CONNECT` to listed names and ports only, refuses IP literals and names with any non-public address (IPv4-mapped, NAT64 and 6to4 forms included), and connects to the address it checked. |
 | Inbound exposure | pasta's automatic port forwarding (`-t`, `-u`, `-T`, `-U`, all `auto` by default) is set to `none`. |
 | Other processes | PID namespace; no capabilities; nested user namespaces disabled (`--disable-userns`). |
 | Your machine's memory and process table | With a systemd user session, the jail and pasta run in a scope with `MemoryMax` (50% of RAM), `MemorySwapMax=0` and `TasksMax` (4096). The jail's tmpfs `/tmp` and `$HOME` are charged to it. |
@@ -33,8 +34,12 @@ Read these before trusting the jail with anything.
 
 1. **Exfiltration.** The agent can send anything it can read (the working
    directory, its own API keys) to any public internet host, and to the model
-   provider by design. Egress is filtered by address class, not allow-listed by
-   destination. DNS queries can also carry data out.
+   provider by design. By default egress is filtered by address class, not
+   allow-listed by destination, and DNS queries can also carry data out. With
+   `--allow-host`, data can only leave over HTTPS to the names you list, and
+   there is no DNS; but a broad name (`github.com`, `*.amazonaws.com`) is a
+   broad permission, and a CDN that routes on the `Host` header inside TLS can
+   carry a request to another of its customers ([docs/ALLOW_HOST.md](ALLOW_HOST.md)).
 2. **Secrets the hiding misses.** Files are hidden by name only. A secret in
    a file with an ordinary name, a copy committed to git history
    (`git show HEAD:.env`), or anything under `.git`, `node_modules` or a virtualenv

@@ -9,6 +9,12 @@
   each one, so the agent can't read, change, rename or delete it. Templates such
   as `.env.example` stay visible. `--hide PATTERN` hides more, `--show PATTERN`
   keeps a file visible, and `--no-hide` turns it off.
+- `--allow-host NAME` (repeatable, `*.example.com` and `:port` allowed) limits
+  the network to HTTPS to the names you list. The jail gets no network of its
+  own, only a Unix socket to a small proxy on the host, which refuses names that
+  resolve to private addresses and lists what it refused after the run. A
+  project's `.agent-jail` can narrow the list. Needs `python3`. Design in
+  [docs/ALLOW_HOST.md](docs/ALLOW_HOST.md).
 - A seccomp filter, on by default on x86_64 and aarch64: it refuses
   `TIOCSTI` and `TIOCLINUX` terminal injection, `ptrace` and other ways into
   other processes, the kernel keyring (shared with your login session),

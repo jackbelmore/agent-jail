@@ -15,6 +15,7 @@ complete -c agent-jail -n $before -a continue -d Continue
 complete -c agent-jail -n $before -a shell -d "bash with the jail's view"
 
 complete -c agent-jail -n $before -l net -x -a 'isolated none host' -d 'Network mode'
+complete -c agent-jail -n $before -l allow-host -x -d 'Reach only this host, over HTTPS'
 complete -c agent-jail -n $before -l host-port -x -d 'Forward 127.0.0.1:PORT to the host'
 complete -c agent-jail -n $before -l git -x -a 'protect ro off' -d 'Git protection'
 complete -c agent-jail -n $before -l ro -r -F -d 'Also expose a path read-only'

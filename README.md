@@ -53,6 +53,7 @@ Or name the agent and skip the list:
 $ agent-jail codex                        # public internet only (the default)
 $ agent-jail --host-port 11434 opencode   # plus a local Ollama on the host
 $ agent-jail --net none qwen              # no network at all
+$ agent-jail --allow-host api.anthropic.com claude   # only the hosts you list
 $ agent-jail --shell codex                # a shell with the agent's exact view
 $ agent-jail --install claude             # install or update an agent
 ```
@@ -178,6 +179,35 @@ The guard checks what *kind* of address a connection goes to; it is not a list
 of approved sites. So the agent can still send anything it can read to any
 public server. That and the other limits are listed in
 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+
+### Only the hosts you list
+
+`--allow-host` swaps the guard for a list of names:
+
+```console
+$ agent-jail --allow-host api.anthropic.com --allow-host '*.github.com' claude
+```
+
+The jail then has no network connection of its own at all. Its only way out
+is a proxy that `agent-jail` runs on your machine and passes in as a Unix
+socket; inside, `HTTPS_PROXY` points at it. The proxy lets through HTTPS
+connections (`CONNECT`) to the names on the list, on port 443 unless you name
+another (`example.com:8443`), and only when every address the name resolves to
+is public. A name that resolves to your router, `localhost` or a cloud metadata
+address is refused even if you listed it. There is no DNS inside the jail
+either, so DNS can't carry data out. After the run, `agent-jail` lists what the
+proxy refused:
+
+```console
+agent-jail: warning: the --allow-host proxy refused:
+    example.org:443 not on the --allow-host list
+```
+
+It needs `python3`, which runs the proxy and a small forwarder inside the jail.
+Programs that ignore `HTTPS_PROXY`, plain `http://` URLs and git over SSH can't
+connect; use `https://` remotes. A broad name is a broad permission:
+`github.com` includes anyone's gists. The design is in
+[docs/ALLOW_HOST.md](docs/ALLOW_HOST.md).
 
 ### What happens when you run it
 
@@ -350,6 +380,8 @@ fails there with a permission error, allow it, for example with
 `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0` (which is what CI
 does).
 
+`--allow-host` needs `python3`.
+
 Memory and process limits need a systemd user session (`systemd-run --user`),
 which most desktop distributions have. Without one, the jail runs without them.
 
@@ -370,6 +402,7 @@ agent-jail [options] [PROFILE [ARGS...]]
   --check                    check that everything agent-jail needs is installed
   --install NAME             install or update an agent's npm package, in a jail
   --net isolated|none|host   network mode (default isolated; host is unsafe)
+  --allow-host NAME          reach only NAME over HTTPS, e.g. *.github.com (repeatable)
   --host-port PORT           expose 127.0.0.1:PORT from the host (repeatable)
   --git protect|ro|off       git protection (default protect)
   --ro PATH                  expose an extra path read-only
@@ -416,6 +449,7 @@ earlier run) wrote that file too:
 | `hide = PATTERN` | always: it hides more |
 | `seccomp = on` | always (`seccomp = off` is ignored) |
 | `memory = SIZE`, `tasks = N` | it's lower than your limit |
+| `allow-host = NAME` | always, to narrow: if you didn't list hosts, its list applies; if you did, only hosts on both lists |
 | `host-port`, `ro`, `show`, `no-hide` | never: these loosen the jail, so they're ignored with a warning |
 
 `agent-jail` says what the project's file changed before the agent starts. A file
