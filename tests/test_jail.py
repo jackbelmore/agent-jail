@@ -374,10 +374,11 @@ def test_changed_agent_settings_are_reported(jail):
 def test_list_shows_every_agent(jail):
     r = jail.run("--list", net="")
     assert r.returncode == 0
-    for name in ["Claude Code", "Codex", "Gemini CLI", "Qwen Code", "OpenCode", "Continue",
+    for name in ["Claude Code", "Codex", "Antigravity", "Qwen Code", "OpenCode", "Continue",
                  "Crush", "Copilot CLI"]:
         assert name in r.stdout
     assert "installs @openai/codex" in r.stdout
+    assert "Gemini" not in r.stdout
 
 
 @needs_node
@@ -463,11 +464,44 @@ def test_copilot_starts_with_updates_and_its_sandbox_off(jail):
     assert "/.cache/copilot" in r.stdout
 
 
+def test_agy_runs_from_path_with_its_state_in_the_jail(jail):
+    agy = jail.home / ".local/bin/agy"
+    agy.parent.mkdir(parents=True)
+    agy.write_bytes(b"\x7fELF stand-in")  # a binary: run directly, not with node
+    jail.env["PATH"] = f"{agy.parent}:{jail.env['PATH']}"
+    r = jail.run("--dry-run", "agy")
+    assert r.returncode == 0, r.stderr
+    assert f"--ro-bind {agy} {agy}" in r.stdout
+    assert f"{jail.home}/.local/share/agent-jail/agy/.gemini {jail.home}/.gemini" in r.stdout
+
+
+def test_agy_is_not_installed_by_agent_jail(jail):
+    r = jail.run("--install", "agy", net="")
+    assert r.returncode != 0 and "antigravity.google/cli/install.sh" in r.stderr
+    r = jail.run("agy")  # not on PATH, no terminal to offer an install on
+    assert r.returncode != 0 and "Google's installer" in r.stderr
+
+
+@needs_node
+def test_codex_says_how_to_log_in_until_it_has(jail):
+    jail.fake_npm_tool("@openai/codex", "codex")
+    assert "codex login --device-auth" in jail.run("codex").stderr
+    assert "--device-auth" not in jail.run("codex", "login", "--device-auth").stderr
+    auth = jail.home / ".local/share/agent-jail/codex/.codex/auth.json"
+    auth.write_text("{}\n")
+    assert "--device-auth" not in jail.run("codex").stderr
+
+
 def test_crush_and_copilot_project_files_are_watched(jail):
     r = jail.sh("echo 'echo hi' > .crushrc; mkdir -p .github/hooks .crush/logs; "
                 "echo '{}' > .github/hooks/x.json; echo log > .crush/logs/crush.log")
     assert ".crushrc" in r.stderr and ".github/hooks/x.json" in r.stderr
     assert "crush.log" not in r.stderr  # logs change every run
+
+
+def test_antigravity_project_files_are_watched(jail):
+    r = jail.sh("mkdir .agents && echo '{}' > .agents/hooks.json")
+    assert ".agents/hooks.json" in r.stderr
 
 
 def test_uninstalled_agent_is_refused_without_a_terminal(jail):
