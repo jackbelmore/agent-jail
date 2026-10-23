@@ -4,6 +4,9 @@
 
 ### Added
 
+- An "Alternatives" section in the README comparing ai-jail, Anthropic's
+  sandbox-runtime and Docker Sandboxes (plus container-use and landrun), with
+  where each is the better choice.
 - Profiles for Crush (`crush`, `@charmland/crush`) and GitHub Copilot CLI
   (`copilot`, `@github/copilot`), each installed and run in the jail before
   adding it. Crush runs its Go binary directly with metrics off; Copilot starts
