@@ -195,6 +195,22 @@ def test_memory_limit_stops_a_runaway(jail):
 
 
 @needs_systemd
+def test_tmpfs_write_hits_enospc_before_oom(jail):
+    jail.with_user_session()
+    fill = (
+        "python3 -I -c 'import errno\n"
+        "try:\n"
+        "    with open(\"../big\", \"wb\") as f:\n"
+        "        f.write(b\"x\" * (32 * 1024 * 1024))\n"
+        "except OSError as e:\n"
+        "    print(e.errno == errno.ENOSPC)\n'"
+    )
+    r = jail.sh(fill, "--memory", "64M")
+    assert r.returncode == 0, r.stderr
+    assert "True" in r.stdout
+
+
+@needs_systemd
 def test_limits_are_on_by_default(jail):
     jail.with_user_session()
     r = jail.run("--dry-run", "shell", net="none")

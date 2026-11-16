@@ -780,12 +780,25 @@ build_jail() {
             printf 'nameserver 127.0.0.1\n' >"$tmp/resolv.conf"
             b+=(--ro-bind "$tmp/resolv.conf" /etc/resolv.conf) ;;
     esac
+    # Cap each tmpfs below the cgroup memory limit so large writes to $HOME,
+    # /tmp or /dev/shm fail with ENOSPC instead of hitting MemoryMax and
+    # OOM-killing the agent.
+    local mem_bytes shm_sz=$((512 << 20)) tmp_sz=$((2 << 30)) home_sz=$((512 << 20))
+    if [[ $memory != off ]]; then
+        mem_bytes=$(amount "$memory")
+        ((mem_bytes / 8 < shm_sz)) && shm_sz=$((mem_bytes / 8))
+        ((mem_bytes / 2 < tmp_sz)) && tmp_sz=$((mem_bytes / 2))
+        ((mem_bytes / 4 < home_sz)) && home_sz=$((mem_bytes / 4))
+        ((shm_sz < 4096)) && shm_sz=4096
+        ((tmp_sz < 4096)) && tmp_sz=4096
+        ((home_sz < 4096)) && home_sz=4096
+    fi
     b+=(
         --proc /proc
         --dev /dev
-        --tmpfs /dev/shm
-        --tmpfs /tmp
-        --tmpfs "$HOME"
+        --size "$shm_sz" --tmpfs /dev/shm
+        --size "$tmp_sz" --tmpfs /tmp
+        --size "$home_sz" --tmpfs "$HOME"
     )
     for p in "${ro_paths[@]}"; do
         [[ -e $p ]] || die "no such path: $p"
