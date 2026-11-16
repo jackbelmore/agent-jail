@@ -104,6 +104,10 @@ without asking anything.
 
 ## How it works, in simple terms
 
+<p align="center">
+  <img src="img/how-it-works.svg" alt="How it works: four layers around the agent. Limits (systemd) cap memory and processes. Network (pasta and nftables) gives it its own connection that reaches only the public internet. Files (bubblewrap) give it its own view of the disk with only your project. Kernel rules (seccomp) refuse dangerous requests to the Linux kernel.">
+</p>
+
 Think of the jail as a room that is built for the agent each time you start it.
 
 - **Only what the agent needs is in the room.** Your project folder, which it

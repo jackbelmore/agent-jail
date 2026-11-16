@@ -38,7 +38,7 @@
     <rect class="chip" x="128" width="74" height="34" rx="17"/><text class="chipt" x="165" y="22" text-anchor="middle">Codex</text>
     <rect class="chip" x="212" width="114" height="34" rx="17"/><text class="chipt" x="269" y="22" text-anchor="middle">Antigravity</text>
     <rect class="chip" x="336" width="90" height="34" rx="17"/><text class="chipt" x="381" y="22" text-anchor="middle">Copilot</text>
-    <rect class="chip" x="436" width="96" height="34" rx="17" fill="#134e4a" stroke="#2dd4bf"/><text class="chipt" x="484" y="22" text-anchor="middle" fill="#5eead4">+4 more</text>
+    <rect class="chip" x="436" width="96" height="34" rx="17" fill="#134e4a" stroke="#2dd4bf"/><text class="chipt" x="484" y="22" text-anchor="middle" fill="#5eead4">+5 more</text>
   </g>
   <text x="72" y="368" font-size="16" fill="#94a3b8">For Linux · one command · free and open source (MIT)</text>
 
