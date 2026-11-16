@@ -4,6 +4,13 @@
 
 ### Added
 
+- A profile for OpenAI's ChatGPT desktop app (the Codex app): `agent-jail
+  chatgpt`. It is the first profile with a window: the jail passes in the
+  Wayland socket and, unless you say `--gpu off`, the GPU's render node, and
+  nothing else of your session (no D-Bus, no X11). The app's state is in the
+  jail, Chromium's own sandbox and Codex's are off because the jail disables the
+  user namespaces they need, and only the folder you start it in is writable.
+  New option `--gpu on|off` (a project's `.agent-jail` can turn it off, not on).
 - A profile for Google's Antigravity CLI (`agy`), which replaces Gemini CLI.
   `agent-jail` runs the `agy` that Google's installer put on your PATH, with its
   state in the jail; a project's `.agents/` folder is now watched too.

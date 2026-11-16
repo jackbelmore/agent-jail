@@ -29,6 +29,7 @@ against), [ALTERNATIVES.md](ALTERNATIVES.md), [SECCOMP.md](SECCOMP.md) and
 | Continue | `agent-jail continue` | `@continuedev/cli` | Through `~/.continue/config.yaml`, which the jail reads but can't change |
 | Crush | `agent-jail crush` | `@charmland/crush` | `agent-jail crush login` (Charm Hyper), `crush login copilot` or `crush login grok` print a device code; or paste a provider API key when it starts. Not `crush login openai`, which waits for a `localhost` callback |
 | GitHub Copilot CLI | `agent-jail copilot` | `@github/copilot` | `agent-jail copilot login --device-code`, or `/login` and choose "Sign in with a device code". Its default browser login waits for a `localhost` callback |
+| ChatGPT desktop app | `agent-jail chatgpt` | not by agent-jail: OpenAI's package ([developers.openai.com/codex/app](https://developers.openai.com/codex/app)), which puts the app under `/usr` | In the app's own window; see the note below |
 | A shell | `agent-jail shell` | built in | Nothing to log in to: it's for seeing what an agent would see |
 
 Each agent keeps its logins, sessions and settings in
@@ -54,6 +55,20 @@ Per agent:
   a project's `.agents/` folder (hooks, MCP servers, plugins) is watched. Its own
   terminal sandbox needs user namespaces and stays off. Not yet tried in the jail:
   its browser tool, which starts a bundled Chrome.
+- **ChatGPT desktop app** (the Codex app) is the one profile with a window, so
+  it needs a Wayland session. `agent-jail` runs the app that your package manager
+  installed, and hands it the compositor's Wayland socket and, unless `--gpu off`,
+  `/dev/dri` with the read-only `/sys` entries Mesa needs; with `--gpu off` it
+  draws in software. It gets no D-Bus (so no keyring, tray icon or desktop
+  portals) and no X11. Start it in a project folder, `cd ~/code/app && agent-jail
+  chatgpt`: that folder is the only one it can write, however many projects its
+  window offers to open. Its settings and sign-in are in the jail's
+  `~/.config/Codex`, `~/.cache/Codex` and `~/.codex`, and the sign-in token is kept
+  in a file (`--password-store=basic`). Chromium's own sandbox and Codex's need the
+  user namespaces the jail disables, so both are off (`--no-sandbox` and
+  `sandbox_mode = "danger-full-access"`): the jail is the sandbox. Not yet tried
+  in the jail: signing in. A login that waits for your browser to come back to
+  `localhost` can't finish there.
 - **Qwen Code** starts with usage statistics and auto-update off, and its
   telemetry host is blocked.
 - **OpenCode** reads your `~/.config/opencode/opencode.json` but can't change it;
@@ -231,7 +246,7 @@ sequenceDiagram
 | `.git/hooks`, `.git/config` | read-only (commits still work; `--git ro` blocks those too) |
 | Agent and editor settings in the project (`.claude/`, `.codex/`, `.mcp.json`, `.vscode/`, `.envrc`, ...) | read/write, but any change is reported after the run |
 | Environment | cleared (API keys and tokens in your shell don't leak in) |
-| `/run/user` (D-Bus, Wayland, PipeWire) | absent |
+| `/run/user` (D-Bus, Wayland, PipeWire) | absent, except the Wayland socket for the `chatgpt` profile |
 | Network (`--net isolated`, the default) | own network namespace via [pasta]; nftables rejects loopback, RFC 1918, CGNAT/Tailscale, link-local and multicast; public internet works |
 | Processes | own PID namespace; can't create user namespaces; no capabilities |
 | System calls | a seccomp filter refuses terminal injection (`TIOCSTI`), `ptrace`, the kernel keyring, `io_uring`, `bpf` and others agents don't need ([SECCOMP.md](SECCOMP.md)) |
@@ -394,6 +409,7 @@ agent-jail [options] [PROFILE [ARGS...]]
   --show PATTERN             don't hide files named like PATTERN
   --no-hide                  hide no files, not even .env and keys
   --seccomp on|off           the seccomp filter (default on; off lets debuggers work)
+  --gpu on|off               give a desktop app (chatgpt) the GPU (default on)
   --memory SIZE|PERCENT|off  memory limit (default 50% of RAM)
   --tasks N|off              process and thread limit (default 4096)
   --shell                    run bash with the profile's sandbox instead
@@ -432,6 +448,7 @@ earlier run) wrote that file too:
 | `git = ro`, `git = protect` | it's stricter (`off` < `protect` < `ro`) |
 | `hide = PATTERN` | always: it hides more |
 | `seccomp = on` | always (`seccomp = off` is ignored) |
+| `gpu = off` | always (`gpu = on` is ignored) |
 | `memory = SIZE`, `tasks = N` | it's lower than your limit |
 | `allow-host = NAME` | always, to narrow: if you didn't list hosts, its list applies; if you did, only hosts on both lists |
 | `host-port`, `ro`, `show`, `no-hide` | never: these loosen the jail, so they're ignored with a warning |

@@ -5,6 +5,8 @@ import os
 import pty
 import re
 import select
+import shutil
+import socket
 import struct
 import subprocess
 import termios
@@ -375,7 +377,7 @@ def test_list_shows_every_agent(jail):
     r = jail.run("--list", net="")
     assert r.returncode == 0
     for name in ["Claude Code", "Codex", "Antigravity", "Qwen Code", "OpenCode", "Continue",
-                 "Crush", "Copilot CLI"]:
+                 "Crush", "Copilot CLI", "ChatGPT app"]:
         assert name in r.stdout
     assert "installs @openai/codex" in r.stdout
     assert "Gemini" not in r.stdout
@@ -480,6 +482,84 @@ def test_agy_is_not_installed_by_agent_jail(jail):
     assert r.returncode != 0 and "antigravity.google/cli/install.sh" in r.stderr
     r = jail.run("agy")  # not on PATH, no terminal to offer an install on
     assert r.returncode != 0 and "Google's installer" in r.stderr
+
+
+def fake_chatgpt_app(jail):
+    """A stand-in desktop app on PATH and a Wayland socket to hand it."""
+    app = jail.home / "opt/chatgpt/chatgpt"
+    app.parent.mkdir(parents=True)
+    app.write_text("#!/bin/sh\necho fake-app \"$@\"\n")
+    app.chmod(0o755)
+    jail.env["PATH"] = f"{app.parent}:{jail.env['PATH']}"
+    sock = jail.home.parent / "wayland-9"
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(sock))
+    jail.env["WAYLAND_DISPLAY"] = "wayland-9"
+    return app, sock, srv
+
+
+def test_chatgpt_app_gets_wayland_and_its_state_in_the_jail(jail):
+    app, sock, srv = fake_chatgpt_app(jail)
+    with srv:
+        r = jail.run("--dry-run", "chatgpt")
+    assert r.returncode == 0, r.stderr
+    rt = jail.env["XDG_RUNTIME_DIR"]
+    assert f"--ro-bind {sock} {rt}/wayland-0" in r.stdout
+    assert f"--ro-bind {app.parent} {app.parent}" in r.stdout  # outside /usr: the whole install
+    assert "--setenv WAYLAND_DISPLAY wayland-0" in r.stdout
+    assert "--no-sandbox --ozone-platform=wayland" in r.stdout
+    assert "--setenv DISPLAY" not in r.stdout  # no X11
+    state = f"{jail.home}/.local/share/agent-jail/chatgpt"
+    for d in [".config/Codex", ".cache/Codex", ".cache/codex-runtimes", ".codex"]:
+        assert f"{state}/{d} {jail.home}/{d}" in r.stdout
+    assert ("--dev-bind /dev/dri /dev/dri" in r.stdout) == os.path.exists("/dev/dri")
+
+
+def test_chatgpt_app_sees_wayland_but_not_your_session(jail):
+    app, sock, srv = fake_chatgpt_app(jail)
+    jail.env["DISPLAY"] = ":0"
+    jail.env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/1000/bus"
+    with srv:
+        r = jail.run("--shell", "chatgpt", "-c",
+                     "ls $XDG_RUNTIME_DIR; echo \"[$DISPLAY][$DBUS_SESSION_BUS_ADDRESS]\"; "
+                     "cat ~/.codex/config.toml; ls ~/.ssh 2>&1")
+    listing, _, rest = r.stdout.partition("[][]\n")
+    assert "wayland-0" in listing.split() and "bus" not in listing.split(), r.stderr
+    assert 'sandbox_mode = "danger-full-access"' in rest
+    assert "id_canary" not in r.stdout
+
+
+def test_gpu_off_leaves_the_app_without_dri(jail):
+    app, sock, srv = fake_chatgpt_app(jail)
+    with srv:
+        r = jail.run("--dry-run", "--gpu", "off", "chatgpt")
+    assert r.returncode == 0, r.stderr
+    assert "/dev/dri" not in r.stdout and "--disable-gpu" in r.stdout
+
+
+def test_project_file_can_turn_the_gpu_off_but_not_on(jail):
+    app, sock, srv = fake_chatgpt_app(jail)
+    with srv:
+        (jail.work / ".agent-jail").write_text("gpu = off\n")
+        r = jail.run("--dry-run", "chatgpt")
+        assert "makes the jail stricter: gpu off" in r.stderr and "/dev/dri" not in r.stdout
+        r = jail.run("--dry-run", "--gpu", "off", "chatgpt")
+        (jail.work / ".agent-jail").write_text("gpu = on\n")
+        assert "ignoring 'gpu = on'" in jail.run("--dry-run", "--gpu", "off", "chatgpt").stderr
+    r = jail.run("--gpu", "maybe", "chatgpt")
+    assert r.returncode != 0 and "--gpu must be on or off" in r.stderr
+
+
+def test_chatgpt_app_needs_a_wayland_session_and_an_install(jail):
+    if not shutil.which("chatgpt", path="/usr/bin:/bin"):  # not on PATH, nothing to offer
+        r = jail.run("chatgpt")
+        assert r.returncode != 0 and "developers.openai.com/codex/app" in r.stderr
+    app, sock, srv = fake_chatgpt_app(jail)
+    with srv:
+        pass
+    sock.unlink()
+    r = jail.run("chatgpt")
+    assert r.returncode != 0 and "needs a Wayland session" in r.stderr
 
 
 @needs_node

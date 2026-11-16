@@ -3,13 +3,13 @@
 
 _agent_jail() {
     local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD - 1]} i
-    local agents="claude codex agy qwen opencode continue crush copilot"
+    local agents="claude codex agy qwen opencode continue crush copilot chatgpt"
 
     # Options come before the profile; after it, every word is the agent's.
     for ((i = 1; i < COMP_CWORD; i++)); do
         [[ ${COMP_WORDS[i]} == -* ]] && continue
         case ${COMP_WORDS[i - 1]} in
-            --net | --allow-host | --host-port | --git | --ro | --hide | --show | --seccomp | --memory | --tasks | --install)
+            --net | --allow-host | --host-port | --git | --ro | --hide | --show | --seccomp | --gpu | --memory | --tasks | --install)
                 continue ;;
         esac
         return 0
@@ -18,6 +18,7 @@ _agent_jail() {
     case $prev in
         --net)       mapfile -t COMPREPLY < <(compgen -W "isolated none host" -- "$cur"); return ;;
         --seccomp)   mapfile -t COMPREPLY < <(compgen -W "on off" -- "$cur"); return ;;
+        --gpu)       mapfile -t COMPREPLY < <(compgen -W "on off" -- "$cur"); return ;;
         --git)       mapfile -t COMPREPLY < <(compgen -W "protect ro off" -- "$cur"); return ;;
         --install)   mapfile -t COMPREPLY < <(compgen -W "$agents" -- "$cur"); return ;;
         --ro)        mapfile -t COMPREPLY < <(compgen -f -- "$cur"); return ;;
@@ -27,7 +28,7 @@ _agent_jail() {
     esac
     if [[ $cur == -* ]]; then
         mapfile -t COMPREPLY < <(compgen -W "--net --allow-host --host-port --git --ro --hide --show
-            --no-hide --seccomp --memory --tasks --shell --list --check --install --force --dry-run --help --version" \
+            --no-hide --seccomp --gpu --memory --tasks --shell --list --check --install --force --dry-run --help --version" \
             -- "$cur")
     else
         mapfile -t COMPREPLY < <(compgen -W "$agents shell" -- "$cur")

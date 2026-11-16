@@ -94,6 +94,7 @@ If it isn't installed yet, `agent-jail` installs it for you, inside a jail too:
 | Continue | `agent-jail continue` | Uses your `~/.continue/config.yaml` |
 | Crush | `agent-jail crush` | `agent-jail crush login` |
 | GitHub Copilot CLI | `agent-jail copilot` | `agent-jail copilot login --device-code` |
+| ChatGPT desktop app | `agent-jail chatgpt` | In its own window; see the [guide](docs/GUIDE.md#supported-agents). Needs a Wayland desktop, and OpenAI's app installed first |
 
 > [!NOTE]
 > Each agent logs in **once, inside the jail**, and that login is kept apart

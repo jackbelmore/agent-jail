@@ -87,6 +87,16 @@ Read these before trusting the jail with anything.
    [the guide](GUIDE.md#supported-agents)). The jail replaces it, but anything an
    agent's own sandbox would have blocked *inside* the working directory, such as
    writes to particular files, is no longer blocked.
+11. **Desktop apps (the `chatgpt` profile).** The Wayland socket is a direct line
+   to your compositor, and `agent-jail` doesn't narrow it. Whatever the
+   compositor offers every client (clipboard, and, depending on the compositor,
+   screen capture or synthetic keyboard input) is reachable by the app and by
+   anything running inside it. With the GPU on, the render node and a read-only
+   view of `/sys/devices` expose the graphics driver's kernel interface and
+   describe your hardware; `--gpu off` removes both at the cost of software
+   rendering. Chromium's own sandbox is off in the jail, so the jail is the only
+   thing between a compromised web page in the app and everything else. The app
+   also reaches your ChatGPT account over the network by design (see 1).
 
 ## Verification
 

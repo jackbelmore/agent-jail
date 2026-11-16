@@ -1,7 +1,7 @@
 # fish completion for agent-jail. ./install.sh puts it where fish finds it:
 # ~/.config/fish/completions/agent-jail.fish
 
-set -l profiles claude codex agy qwen opencode continue crush copilot shell
+set -l profiles claude codex agy qwen opencode continue crush copilot chatgpt shell
 # Options come before the profile; after it, every word is the agent's.
 set -l before "not __fish_seen_subcommand_from $profiles"
 
@@ -14,6 +14,7 @@ complete -c agent-jail -n $before -a opencode -d OpenCode
 complete -c agent-jail -n $before -a continue -d Continue
 complete -c agent-jail -n $before -a crush -d Crush
 complete -c agent-jail -n $before -a copilot -d 'GitHub Copilot CLI'
+complete -c agent-jail -n $before -a chatgpt -d 'ChatGPT desktop app'
 complete -c agent-jail -n $before -a shell -d "bash with the jail's view"
 
 complete -c agent-jail -n $before -l net -x -a 'isolated none host' -d 'Network mode'
@@ -25,6 +26,7 @@ complete -c agent-jail -n $before -l hide -x -d 'Also hide project files named l
 complete -c agent-jail -n $before -l show -x -d "Don't hide files named like this"
 complete -c agent-jail -n $before -l no-hide -d 'Hide no files, not even .env and keys'
 complete -c agent-jail -n $before -l seccomp -x -a 'on off' -d 'The seccomp filter'
+complete -c agent-jail -n $before -l gpu -x -a 'on off' -d 'GPU for a desktop app'
 complete -c agent-jail -n $before -l memory -x -a '25% 50% 75% 4G 8G off' -d 'Memory limit'
 complete -c agent-jail -n $before -l tasks -x -a '1024 4096 off' -d 'Process and thread limit'
 complete -c agent-jail -n $before -l shell -d "Start bash with the agent's view"
