@@ -24,7 +24,7 @@ may be compromised. Assume it actively tries to get out.
 | Hosts you didn't list, with `--allow-host` | No network namespace route out; one Unix socket to a host-side proxy that allows `CONNECT` to listed names and ports only, refuses IP literals and names with any non-public address (IPv4-mapped, NAT64 and 6to4 forms included), and connects to the address it checked. |
 | Inbound exposure | pasta's automatic port forwarding (`-t`, `-u`, `-T`, `-U`, all `auto` by default) is set to `none`. |
 | Other processes | PID namespace; no capabilities; nested user namespaces disabled (`--disable-userns`). |
-| Your machine's memory and process table | With a systemd user session, the jail and pasta run in a scope with `MemoryMax` (50% of RAM), `MemorySwapMax=0` and `TasksMax` (4096). The jail's tmpfs `/tmp` and `$HOME` are charged to it. |
+| Your machine's memory and process table | With a systemd user session, the jail and pasta run in a scope with `MemoryMax` (50% of RAM), `MemorySwapMax=0`, `OOMPolicy=continue` and `TasksMax` (4096). The jail's tmpfs `/tmp` and `$HOME` are charged to it. |
 | Your terminal input | A seccomp filter refuses the `TIOCSTI` and `TIOCLINUX` ioctls, comparing only the 32 bits the kernel uses. Without the filter (`--seccomp off`, or not x86_64 or aarch64), the agent is started in a new session if the kernel still allows `TIOCSTI`. |
 | Keys in your login session's keyring | The jail shares the session keyring; the filter refuses `keyctl`, `add_key` and `request_key`. |
 

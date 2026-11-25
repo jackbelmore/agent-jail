@@ -60,7 +60,7 @@ readonly AGENTS=(
     "codex|Codex|@openai/codex|codex"
     "agy|Antigravity||agy"
     "qwen|Qwen Code|@qwen-code/qwen-code|qwen"
-    "opencode|OpenCode|opencode-ai|opencode"
+    "opencode|OpenCode|@opencode/cli|opencode"
     "continue|Continue|@continuedev/cli|cn"
     "crush|Crush|@charmland/crush|crush"
     "copilot|Copilot CLI|@github/copilot|copilot"
@@ -507,10 +507,15 @@ use_limits() {
         limits_off="off"
     elif ! command -v systemd-run >/dev/null; then
         limits_off="none: systemd-run isn't installed"
-    elif ! systemd-run --user --scope --quiet --collect "${limit_props[@]}" -- /bin/sh -c \
-            "d=/sys/fs/cgroup\$(sed -n 's/^0:://p' /proc/self/cgroup)$probe" \
-            </dev/null >/dev/null 2>&1; then
-        limits_off="none: no systemd user session to enforce them"
+    else
+        # Keep the agent alive when the kernel OOM-kills a runaway child
+        # process instead of systemd stopping the whole scope (OOMPolicy=stop).
+        limit_props+=(-p OOMPolicy=continue)
+        if ! systemd-run --user --scope --quiet --collect "${limit_props[@]}" -- /bin/sh -c \
+                "d=/sys/fs/cgroup\$(sed -n 's/^0:://p' /proc/self/cgroup)$probe" \
+                </dev/null >/dev/null 2>&1; then
+            limits_off="none: no systemd user session to enforce them"
+        fi
     fi
     [[ -z $limits_off ]] || limit_props=()
 }
@@ -1760,6 +1765,10 @@ run_jail || status=$?
 ((dry_run)) && exit 0
 
 report_proxy
+
+if ((${#limit_props[@]})) && [[ $memory != off ]] && ((status == 137)); then
+    warn "the jailed process was killed (SIGKILL); if it hit the memory limit ($memory), raise it with --memory"
+fi
 
 # Anything that git would execute on the host, created during the run.
 new_git=$(LC_ALL=C comm -13 <(printf '%s\n' "$git_before") <(find_git "$work") |

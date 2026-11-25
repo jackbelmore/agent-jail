@@ -188,9 +188,8 @@ def test_memory_limit_stops_a_runaway(jail):
     grab = "python3 -I -c 'b = bytes(300_000_000) + bytes(1); print(\"survived\")'"
     r = jail.sh(grab, "--memory", "64M")
     assert "survived" not in r.stdout
-    # SIGKILL from the OOM killer, or SIGTERM from systemd stopping the scope
-    # after it (OOMPolicy=stop): either way the jail is gone.
-    assert r.returncode in (137, 143)
+    assert r.returncode == 137
+    assert "memory limit (64M)" in r.stderr
     assert "survived" in jail.sh(grab, "--memory", "2G").stdout
 
 
@@ -211,11 +210,23 @@ def test_tmpfs_write_hits_enospc_before_oom(jail):
 
 
 @needs_systemd
+def test_memory_limit_keeps_the_agent_alive_when_a_child_ooms(jail):
+    jail.with_user_session()
+    grab = "python3 -I -c 'b = bytes(300_000_000) + bytes(1); print(\"child-survived\")'"
+    r = jail.sh(f"{grab}; echo child-rc=$?; echo agent-survived", "--memory", "64M")
+    assert r.returncode == 0, r.stderr
+    assert "child-survived" not in r.stdout
+    assert "child-rc=137" in r.stdout
+    assert "agent-survived" in r.stdout
+
+
+@needs_systemd
 def test_limits_are_on_by_default(jail):
     jail.with_user_session()
     r = jail.run("--dry-run", "shell", net="none")
     assert r.stdout.startswith("systemd-run --user --scope")
     assert "MemoryMax=50%" in r.stdout and "TasksMax=4096" in r.stdout
+    assert "OOMPolicy=continue" in r.stdout
 
     r = jail.run("--dry-run", "--memory", "off", "--tasks", "off", "shell", net="none")
     assert "systemd-run" not in r.stdout
@@ -333,7 +344,7 @@ def test_symlinked_hooks_are_refused(jail, tmp_path):
 # --- agent state ------------------------------------------------------------
 
 def test_agent_state_is_private_to_the_jail(jail):
-    jail.fake_npm_tool("opencode-ai", "opencode")
+    jail.fake_npm_tool("@opencode/cli", "opencode")
     real_cfg = jail.home / ".config" / "opencode"
     real_cfg.mkdir(parents=True)
     (real_cfg / "opencode.json").write_text('{"model": "x"}\n')
@@ -352,7 +363,7 @@ def test_agent_state_is_private_to_the_jail(jail):
 
 
 def test_planted_symlink_at_an_import_is_not_followed(jail, tmp_path):
-    jail.fake_npm_tool("opencode-ai", "opencode")
+    jail.fake_npm_tool("@opencode/cli", "opencode")
     real_cfg = jail.home / ".config" / "opencode"
     real_cfg.mkdir(parents=True)
     (real_cfg / "opencode.json").write_text("{}\n")
@@ -368,7 +379,7 @@ def test_planted_symlink_at_an_import_is_not_followed(jail, tmp_path):
 
 
 def test_profile_package_is_read_only(jail):
-    pkg = jail.fake_npm_tool("opencode-ai", "opencode")
+    pkg = jail.fake_npm_tool("@opencode/cli", "opencode")
     r = jail.run("--shell", "opencode", "-c", f"echo x > {pkg}/bin/opencode")
     assert "Read-only file system" in r.stderr
 
@@ -461,7 +472,7 @@ def test_codex_starts_with_its_own_sandbox_off(jail):
 
 
 def test_opencode_runs_standalone_unless_overridden(jail):
-    jail.fake_npm_tool("opencode-ai", "opencode")
+    jail.fake_npm_tool("@opencode/cli", "opencode")
 
     for args in [
         (),

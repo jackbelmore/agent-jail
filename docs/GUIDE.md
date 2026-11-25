@@ -25,7 +25,7 @@ against), [ALTERNATIVES.md](ALTERNATIVES.md), [SECCOMP.md](SECCOMP.md) and
 | Codex | `agent-jail codex` | `@openai/codex` | `agent-jail codex login --device-auth`, or `printenv OPENAI_API_KEY \| agent-jail codex login --with-api-key` |
 | Antigravity CLI | `agent-jail agy` | not by agent-jail: Google's installer, `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | "Google OAuth" prints a link; sign in and paste the code back |
 | Qwen Code | `agent-jail qwen` | `@qwen-code/qwen-code` | From inside `agent-jail qwen` |
-| OpenCode | `agent-jail opencode` | `opencode-ai` | `agent-jail opencode auth login` |
+| OpenCode | `agent-jail opencode` | `@opencode/cli` | `agent-jail opencode auth login` |
 | Continue | `agent-jail continue` | `@continuedev/cli` | Through `~/.continue/config.yaml`, which the jail reads but can't change |
 | Crush | `agent-jail crush` | `@charmland/crush` | `agent-jail crush login` (Charm Hyper), `crush login copilot` or `crush login grok` print a device code; or paste a provider API key when it starts. Not `crush login openai`, which waits for a `localhost` callback |
 | GitHub Copilot CLI | `agent-jail copilot` | `@github/copilot` | `agent-jail copilot login --device-code`, or `/login` and choose "Sign in with a device code". Its default browser login waits for a `localhost` callback |
@@ -302,8 +302,8 @@ outside the jail would run them with all of your access.
 The jail runs in a systemd scope, which caps the memory it may use (half the RAM
 by default, with no swap) and the number of processes and threads (4096), so a
 runaway build or a fork bomb can't freeze your desktop. A fork bomb runs out of
-processes inside the jail; a process that reaches the memory limit is killed,
-and systemd then stops the whole jail. Files the agent writes to `/tmp` and its home directory
+processes inside the jail; a process that reaches the memory limit is killed by
+the kernel while the agent itself stays alive (`OOMPolicy=continue`). Files the agent writes to `/tmp` and its home directory
 are held in memory, so they count too. Change the limits with `--memory 8G` or
 `--memory 25%` and `--tasks 1000`, or turn one off with `off`. While the agent
 runs, `systemctl --user status` lists the scope as, for example,
