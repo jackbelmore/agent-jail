@@ -72,7 +72,10 @@ Per agent:
 - **Qwen Code** starts with usage statistics and auto-update off, and its
   telemetry host is blocked.
 - **OpenCode** reads your `~/.config/opencode/opencode.json` but can't change it;
-  auto-update and session sharing are off.
+  auto-update and session sharing are off. It runs with `--standalone` so each
+  jail uses its own private server rather than fighting other jails over the
+  shared `~/.local/state/opencode/service.json` across separate network
+  namespaces.
 - **Crush** reads your `~/.config/crush/crush.json` and `crushrc` but can't
   change them, and keeps logins and API keys in the jail. Its metrics are off,
   and their host is blocked as well. It still checks GitHub for a newer release

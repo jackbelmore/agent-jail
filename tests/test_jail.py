@@ -460,6 +460,42 @@ def test_codex_starts_with_its_own_sandbox_off(jail):
     assert 'sandbox_mode = "danger-full-access"' in r.stdout
 
 
+def test_opencode_runs_standalone_unless_overridden(jail):
+    jail.fake_npm_tool("opencode-ai", "opencode")
+
+    for args in [
+        (),
+        ("-c",),
+        ("mini",),
+        ("auth", "login"),
+    ]:
+        r = jail.run("opencode", *args)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout == " ".join(["fake-agent", "--standalone", *args]) + "\n"
+
+    for args in [
+        ("--standalone",),
+        ("--server", "http://127.0.0.1:4096"),
+        ("--server=http://127.0.0.1:4096",),
+        ("run", "--server", "http://127.0.0.1:4096", "hi"),
+        ("--help",),
+        ("--version",),
+        ("serve",),
+        ("service", "status"),
+        ("--log-level", "debug", "serve"),
+        ("mcp",),
+        ("acp",),
+        ("machine",),
+    ]:
+        r = jail.run("opencode", *args)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout == " ".join(["fake-agent", *args]) + "\n"
+
+    r = jail.run("--shell", "opencode", "-c", "echo ok")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "ok\n"
+
+
 def test_crush_runs_its_binary_with_metrics_off(jail):
     # The npm command is a node wrapper; the profile runs the Go binary it fetched.
     pkg = jail.fake_npm_tool("@charmland/crush", "crush")

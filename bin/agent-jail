@@ -387,6 +387,33 @@ profile_opencode() {
     state=(.config/opencode .local/share/opencode .cache/opencode .local/state/opencode)
     imports=(.config/opencode/opencode.json .config/opencode/opencode.jsonc)
     env=(OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1)
+    # OpenCode's shared background service registers its PID and 127.0.0.1 port
+    # in ~/.local/state/opencode/service.json. Separate jails have separate
+    # network and PID namespaces, so two concurrent jails can't reach each
+    # other's service and keep replacing service.json, forcing each other's
+    # servers to shut down in a reconnect loop. Run a private server per jail
+    # unless the user chose a server/mode or a subcommand that rejects it.
+    local standalone=1 seen_cmd=0 skip=0 arg
+    for arg in "$@"; do
+        if ((skip)); then skip=0; continue; fi
+        case $arg in
+            --) break ;;
+            --standalone|--server|--server=*|-h|--help|-v|--version|--completions|--completions=*)
+                standalone=0; break ;;
+            --log-level|--session|-s|--prompt|--model|-m|--agent|--format|--file|-f|--title|--replay-limit)
+                skip=1 ;;
+            -*) ;;
+            *)
+                if ((!seen_cmd)); then
+                    seen_cmd=1
+                    case $arg in
+                        serve|service|mcp|debug|acp|upgrade|update|uninstall|plugin|pair|machine)
+                            standalone=0; break ;;
+                    esac
+                fi ;;
+        esac
+    done
+    if ((standalone)); then cmd+=(--standalone); fi
 }
 
 profile_continue() {
