@@ -471,6 +471,16 @@ def test_codex_starts_with_its_own_sandbox_off(jail):
     assert 'sandbox_mode = "danger-full-access"' in r.stdout
 
 
+def test_codex_runs_without_its_background_server(jail):
+    # Its server's updater would run downloaded binaries newer than the TUI.
+    jail.fake_npm_tool("@openai/codex", "codex")
+    for args in [(), ("login", "--device-auth")]:
+        r = jail.run("codex", *args)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout == " ".join(
+            ["fake-agent", "-c", "features.daemon_auto_start=false", *args]) + "\n"
+
+
 def test_opencode_runs_standalone_unless_overridden(jail):
     jail.fake_npm_tool("@opencode/cli", "opencode")
 
@@ -623,6 +633,87 @@ def test_chatgpt_app_needs_a_wayland_session_and_an_install(jail):
     sock.unlink()
     r = jail.run("chatgpt")
     assert r.returncode != 0 and "needs a Wayland session" in r.stderr
+
+
+def fake_wayland_socket(jail):
+    """A listening AF_UNIX socket standing in for the compositor's Wayland socket."""
+    sock = jail.home.parent / "wayland-9"
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(sock))
+    srv.listen()
+    jail.env["WAYLAND_DISPLAY"] = "wayland-9"
+    return sock, srv
+
+
+def test_wayland_flag_exposes_only_wayland_socket(jail):
+    sock, srv = fake_wayland_socket(jail)
+    jail.env["DISPLAY"] = ":0"
+    jail.env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/1000/bus"
+    rt = jail.env["XDG_RUNTIME_DIR"]
+    with srv:
+        dry = jail.run("--dry-run", "--wayland", "shell")
+        assert dry.returncode == 0, dry.stderr
+        assert f"--ro-bind {sock} {rt}/wayland-0" in dry.stdout
+        assert "--setenv WAYLAND_DISPLAY wayland-0" in dry.stdout
+        assert "--setenv XDG_SESSION_TYPE wayland" in dry.stdout
+        assert "/dev/dri" not in dry.stdout
+        assert "--setenv DISPLAY" not in dry.stdout
+        assert "--setenv DBUS_SESSION_BUS_ADDRESS" not in dry.stdout
+
+        connect_wl = (
+            "import os, socket; "
+            "s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); "
+            "s.connect(os.path.join(os.environ['XDG_RUNTIME_DIR'], os.environ['WAYLAND_DISPLAY'])); "
+            "print('CONNECTED')"
+        )
+        r = jail.sh(
+            "ls $XDG_RUNTIME_DIR; "
+            "echo \"[$WAYLAND_DISPLAY][$XDG_SESSION_TYPE][$DISPLAY][$DBUS_SESSION_BUS_ADDRESS]\"; "
+            f"python3 -I -c \"{connect_wl}\"",
+            "--wayland",
+        )
+    assert r.returncode == 0, r.stderr
+    listing, _, rest = r.stdout.partition("[wayland-0][wayland][][]\n")
+    assert "wayland-0" in listing.split() and "bus" not in listing.split(), r.stdout
+    assert "CONNECTED" in rest
+
+
+def test_wayland_flag_fails_without_socket(jail):
+    jail.env["WAYLAND_DISPLAY"] = "wayland-missing"
+    r = jail.sh("true", "--wayland")
+    assert r.returncode != 0
+    assert "--wayland needs a Wayland session" in r.stderr
+
+
+def test_wayland_config_allowed_for_user_and_ignored_in_project_file(jail):
+    sock, srv = fake_wayland_socket(jail)
+    rt = jail.env["XDG_RUNTIME_DIR"]
+    with srv:
+        user_config(jail, "wayland\n")
+        r = jail.run("--dry-run", "shell")
+        assert r.returncode == 0, r.stderr
+        assert f"--ro-bind {sock} {rt}/wayland-0" in r.stdout
+        assert "--setenv WAYLAND_DISPLAY wayland-0" in r.stdout
+
+        (jail.home / ".config" / "agent-jail" / "config").unlink()
+        (jail.work / ".agent-jail").write_text("wayland\n")
+        r = jail.run("--dry-run", "shell")
+        assert r.returncode == 0, r.stderr
+        assert "ignoring 'wayland' in .agent-jail" in r.stderr
+        assert "wayland-0" not in r.stdout
+        assert "--setenv WAYLAND_DISPLAY" not in r.stdout
+
+
+@needs_node
+@needs_pasta
+def test_install_does_not_expose_wayland(jail):
+    _, srv = fake_wayland_socket(jail)
+    jail.fake_npm()
+    with srv:
+        r = jail.run("--dry-run", "--wayland", "--install", "codex", net="isolated")
+    assert r.returncode == 0, r.stderr
+    assert "wayland-0" not in r.stdout
+    assert "--setenv WAYLAND_DISPLAY" not in r.stdout
 
 
 @needs_node
@@ -873,3 +964,138 @@ def test_isolated_net_reaches_the_internet(jail):
             "print(urllib.request.urlopen('https://example.com', timeout=10).status)")
     r = jail.sh(f'python3 -I -c "{code}"', net="isolated")
     assert r.stdout.strip() == "200", r.stderr
+
+
+@needs_pasta
+def test_jail_port_forwards_host_loopback_into_jail(jail):
+    with socket.create_server(("127.0.0.1", 0)) as probe:
+        port = probe.getsockname()[1]
+    pasta_help = subprocess.run(["pasta", "--help"], capture_output=True, text=True, check=False)
+    bind_host = "127.0.0.1" if "--host-lo-to-ns-lo" in pasta_help.stdout else "0.0.0.0"
+    srv_code = (
+        f"import socket; s = socket.create_server(({bind_host!r}, {port})); "
+        "s.settimeout(10); print('READY', flush=True); "
+        "c, _ = s.accept(); c.sendall(b'FROM-JAIL\\n'); c.close(); s.close()"
+    )
+    proc = subprocess.Popen(
+        [str(JAIL), "--net", "isolated", "--jail-port", str(port), "shell", "-c",
+         f"python3 -I -c {srv_code!r}"],
+        cwd=jail.work, env=jail.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        ready = proc.stdout.readline()
+        assert ready.strip() == "READY", proc.stderr.read()
+        for _ in range(20):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=2) as cli:
+                    assert cli.recv(64) == b"FROM-JAIL\n"
+                    break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            raise AssertionError("timed out connecting to forwarded --jail-port")
+        out, err = proc.communicate(timeout=10)
+        assert proc.returncode == 0, err + out
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_jail_port_validation_and_project_file_ignored(jail):
+    assert jail.run("--jail-port", "99999", "shell").returncode != 0
+    assert jail.run("--jail-port", "9876", "shell", net="none").returncode != 0
+    r = jail.run("--allow-host", "example.com", "--jail-port", "9876", "shell", net="isolated")
+    assert r.returncode != 0
+
+    (jail.work / ".agent-jail").write_text("jail-port = 9876\n")
+    dry = jail.run("--dry-run", "shell", net="isolated")
+    assert dry.returncode == 0, dry.stderr
+    assert "ignoring 'jail-port = 9876' in .agent-jail" in dry.stderr
+    assert "-t none" in dry.stdout
+
+
+def test_gpu_on_explicit_exposes_dri_without_chatgpt(jail):
+    plain_dry = jail.run("--dry-run", "shell")
+    assert "/dev/dri" not in plain_dry.stdout
+    wl_dry = jail.run("--dry-run", "--wayland", "shell")
+    assert "/dev/dri" not in wl_dry.stdout
+
+    gpu_dry = jail.run("--dry-run", "--gpu", "on", "shell")
+    assert gpu_dry.returncode == 0, gpu_dry.stderr
+    assert ("--dev-bind /dev/dri /dev/dri" in gpu_dry.stdout) == os.path.exists("/dev/dri")
+
+    (jail.work / ".agent-jail").write_text("gpu = off\n")
+    off_dry = jail.run("--dry-run", "--gpu", "on", "shell")
+    assert "makes the jail stricter: gpu off" in off_dry.stderr
+    assert "/dev/dri" not in off_dry.stdout
+
+
+def test_bin_exposes_executable_on_path_and_is_ignored_in_project_file(jail):
+    real_tool = jail.home / "opt" / "mytool" / "real-tool"
+    real_tool.parent.mkdir(parents=True)
+    real_tool.write_text("#!/bin/sh\necho BIN_OK\n")
+    real_tool.chmod(0o755)
+    link = jail.home / "bin_links" / "mytool"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(real_tool)
+
+    r = jail.sh("command -v mytool; mytool; echo x > " + str(real_tool), "--bin", str(link))
+    assert r.returncode != 0
+    assert "/run/agent-jail/bin/mytool" in r.stdout
+    assert "BIN_OK" in r.stdout
+    assert "Read-only file system" in r.stderr
+
+    (jail.work / ".agent-jail").write_text(f"bin = {link}\n")
+    r = jail.sh("command -v mytool || echo MISSING")
+    assert f"ignoring 'bin = {link}' in .agent-jail" in r.stderr
+    assert "MISSING" in r.stdout
+
+    non_exec = jail.home / "plain.txt"
+    non_exec.write_text("hi\n")
+    assert jail.run("--bin", str(non_exec), "shell").returncode != 0
+    assert jail.run("--bin", str(jail.home / "missing"), "shell").returncode != 0
+
+
+def test_blend_runs_blender_inside_jail_and_is_ignored_in_project_file(jail):
+    _, srv = fake_wayland_socket(jail)
+    fake_blender = jail.bin / "blender"
+    fake_blender.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, socket\n"
+        "assert not os.path.exists(os.path.expanduser('~/.ssh'))\n"
+        "s = socket.create_server(('127.0.0.1', 9876))\n"
+        "s.settimeout(5)\n"
+        "c, _ = s.accept()\n"
+        "c.sendall(b'BLENDER-IN-JAIL\\n')\n"
+        "c.close()\n"
+        "s.close()\n"
+    )
+    fake_blender.chmod(0o755)
+    with srv:
+        dry = jail.run("--dry-run", "--blend", "shell")
+        assert dry.returncode == 0, dry.stderr
+        assert "wayland-0" in dry.stdout and "agent-jail-blend" in dry.stdout
+        assert ("--dev-bind /dev/dri /dev/dri" in dry.stdout) == os.path.exists("/dev/dri")
+
+        off_dry = jail.run("--dry-run", "--blend", "--gpu", "off", "shell")
+        assert "/dev/dri" not in off_dry.stdout
+
+        client_code = (
+            "import socket, time\n"
+            "for _ in range(30):\n"
+            "    try:\n"
+            "        with socket.create_connection((\"127.0.0.1\", 9876), timeout=2) as c:\n"
+            "            print(c.recv(64).decode().strip())\n"
+            "            break\n"
+            "    except OSError:\n"
+            "        time.sleep(0.1)\n"
+        )
+        r = jail.sh(f"python3 -I -c '{client_code}'", "--blend")
+        assert r.returncode == 0, r.stderr
+        assert "BLENDER-IN-JAIL" in r.stdout
+
+        (jail.work / ".agent-jail").write_text("blend\n")
+        ignored = jail.run("--dry-run", "shell")
+        assert "ignoring 'blend' in .agent-jail" in ignored.stderr
+        assert "agent-jail-blend" not in ignored.stdout

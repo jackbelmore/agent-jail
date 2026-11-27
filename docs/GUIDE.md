@@ -45,7 +45,12 @@ Per agent:
   makes in its own bubblewrap sandbox, which needs the user namespaces the jail
   disables, so each command would fail. The jail's copy of `config.toml` starts
   with `sandbox_mode = "danger-full-access"`: the jail is the sandbox. Codex still
-  asks for approval as its approval policy says.
+  asks for approval as its approval policy says. The jail also runs Codex
+  without its background app server (`-c features.daemon_auto_start=false`):
+  that server would update itself into the jail's state and stop matching the
+  Codex that starts it. Pasting clipboard images in
+  Codex (and other TUI agents) needs `--wayland` (or `--ro ~/Pictures/Screenshots`
+  to pass screenshot files without exposing Wayland).
 - **Claude Code**: all of its state, including `.claude.json`, is in the jail's
   `~/.claude`, and its auto-updater is off.
 - **Antigravity CLI** (`agy`) replaces Gemini CLI, which Google is retiring. It
@@ -253,7 +258,7 @@ sequenceDiagram
 | `.git/hooks`, `.git/config` | read-only (commits still work; `--git ro` blocks those too) |
 | Agent and editor settings in the project (`.claude/`, `.codex/`, `.mcp.json`, `.vscode/`, `.envrc`, ...) | read/write, but any change is reported after the run |
 | Environment | cleared (API keys and tokens in your shell don't leak in) |
-| `/run/user` (D-Bus, Wayland, PipeWire) | absent, except the Wayland socket for the `chatgpt` profile |
+| `/run/user` (D-Bus, Wayland, PipeWire) | absent, except the Wayland socket with `--wayland` or the `chatgpt` profile |
 | Network (`--net isolated`, the default) | own network namespace via [pasta]; nftables rejects loopback, RFC 1918, CGNAT/Tailscale, link-local and multicast; public internet works |
 | Processes | own PID namespace; can't create user namespaces; no capabilities |
 | System calls | a seccomp filter refuses terminal injection (`TIOCSTI`), `ptrace`, the kernel keyring, `io_uring`, `bpf` and others agents don't need ([SECCOMP.md](SECCOMP.md)) |
@@ -410,13 +415,17 @@ agent-jail [options] [PROFILE [ARGS...]]
   --net isolated|none|host   network mode (default isolated; host is unsafe)
   --allow-host NAME          reach only NAME over HTTPS, e.g. *.github.com (repeatable)
   --host-port PORT           expose 127.0.0.1:PORT from the host (repeatable)
+  --jail-port PORT           expose 127.0.0.1:PORT from the jail to the host (repeatable)
   --git protect|ro|off       git protection (default protect)
   --ro PATH                  expose an extra path read-only
+  --bin PATH                 expose an executable read-only and put it on PATH
   --hide PATTERN             also hide project files named like PATTERN
   --show PATTERN             don't hide files named like PATTERN
   --no-hide                  hide no files, not even .env and keys
   --seccomp on|off           the seccomp filter (default on; off lets debuggers work)
-  --gpu on|off               give a desktop app (chatgpt) the GPU (default on)
+  --wayland                  expose the Wayland socket (for clipboard paste; no GPU, X11 or D-Bus)
+  --blend                    start Blender inside the jail (Wayland + GPU) with MCP on 127.0.0.1:9876
+  --gpu on|off               GPU access: on by default for chatgpt, or opt-in for any profile
   --memory SIZE|PERCENT|off  memory limit (default 50% of RAM)
   --tasks N|off              process and thread limit (default 4096)
   --shell                    run bash with the profile's sandbox instead
@@ -458,7 +467,7 @@ earlier run) wrote that file too:
 | `gpu = off` | always (`gpu = on` is ignored) |
 | `memory = SIZE`, `tasks = N` | it's lower than your limit |
 | `allow-host = NAME` | always, to narrow: if you didn't list hosts, its list applies; if you did, only hosts on both lists |
-| `host-port`, `ro`, `show`, `no-hide` | never: these loosen the jail, so they're ignored with a warning |
+| `host-port`, `jail-port`, `ro`, `bin`, `show`, `no-hide`, `wayland`, `blend` | never: these loosen the jail, so they're ignored with a warning |
 
 `agent-jail` says what the project's file changed before the agent starts. A file
 it can't read as settings, or a symlink in place of one, stops the run.

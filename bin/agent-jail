@@ -98,14 +98,23 @@ Options:
   --host-port PORT  with --net isolated, forward 127.0.0.1:PORT inside the
                     jail to 127.0.0.1:PORT on the host, e.g. 11434 for a local
                     Ollama (repeatable)
+  --jail-port PORT  with --net isolated, forward 127.0.0.1:PORT on the host
+                    into 127.0.0.1:PORT inside the jail (repeatable)
   --git MODE        protect   .git/hooks and .git/config read-only (default)
                     ro        all of .git read-only (no commits inside)
                     off       no extra git protection
   --ro PATH         also expose PATH read-only (repeatable)
+  --bin PATH        expose an executable read-only and put it on PATH
+                    (repeatable; symlinks keep their basename)
   --seccomp MODE    on   refuse TIOCSTI, ptrace, keyctl, io_uring and other
                          system calls agents don't need (default)
                     off  no seccomp filter (debuggers work)
-  --gpu MODE        on   give a desktop app (chatgpt) the GPU (default)
+  --wayland         expose the Wayland socket (for clipboard paste in TUI
+                    agents); no GPU, X11 or D-Bus
+  --blend           start Blender inside the jail (Wayland + GPU) with
+                    MCP auto-started on the jail's private 127.0.0.1:9876
+  --gpu MODE        on   give a desktop app (chatgpt) the GPU (default), or
+                         enable GPU access for any profile when passed explicitly
                     off  software rendering only: no /dev/dri
   --memory SIZE     memory the jail may use: bytes with K, M, G or T, a
                     percentage of RAM, or off (default $MEMORY_DEFAULT)
@@ -351,6 +360,13 @@ profile_codex() {
     # are a separate setting and stay as they are.
     seed .codex/config.toml 'sandbox_mode = "danger-full-access"
 check_for_update_on_startup = false'
+    # By default Codex starts a background app server, and that server's
+    # updater downloads newer server binaries into ~/.codex/packages and runs
+    # them. The jail's Codex is read-only, so the two drift apart: a newer
+    # server rejects the older TUI's feature settings. The server also ends
+    # with the jail anyway. Run it in-process; a later -c on the command line
+    # still wins.
+    cmd+=(-c features.daemon_auto_start=false)
     # Its browser login waits for a callback to localhost:1455, which is the
     # jail's localhost, not the browser's.
     if [[ ! -e $state_dir/.codex/auth.json && ${1:-} != login ]]; then
@@ -781,10 +797,38 @@ report_proxy() {
 
 # --- the sandbox ------------------------------------------------------------
 
+# Latest numeric version subdirectory under $1, or nothing.
+latest_ver_dir() {
+    local d dirs=()
+    [[ -d $1 ]] || return 0
+    for d in "$1"/[0-9]*/; do
+        [[ -d $d ]] && dirs+=("${d%/}")
+    done
+    ((${#dirs[@]})) && printf '%s\n' "${dirs[@]}" | sort -V | tail -n1
+}
+
+# Prepare a sanitized read-only Blender config dir (userpref + addons only,
+# never recent-files or bookmarks) under $state_base/blender-config, setting bcfg_ver.
+prepare_blender_config() {
+    local bcfg=$state_base/blender-config ver
+    bcfg_ver=$(latest_ver_dir "$bcfg")
+    if [[ -z $bcfg_ver ]]; then
+        ver=$(latest_ver_dir "$HOME/.config/blender")
+        if [[ -n $ver ]]; then
+            bcfg_ver=$bcfg/${ver##*/}
+            mkdir -p -- "$bcfg_ver/config" "$bcfg_ver/scripts"
+            [[ -f $ver/config/userpref.blend && ! -L $ver/config/userpref.blend ]] &&
+                cp -f -- "$ver/config/userpref.blend" "$bcfg_ver/config/userpref.blend"
+            [[ -d $ver/scripts/addons && ! -L $ver/scripts/addons ]] &&
+                cp -a -- "$ver/scripts/addons" "$bcfg_ver/scripts/addons"
+        fi
+    fi
+}
+
 # Set run to the command that starts cmd in a jail on directory $1, with git
 # protection $2, from the profile variables above.
 build_jail() {
-    local dir=$1 git=$2 b p rel kv g f m h ports
+    local dir=$1 git=$2 b p rel kv g f m h ports in_ports jail_path=("${path[@]}") inner_cmd blender_bin bcfg_ver=''
     {
         printf '127.0.0.1 localhost agent-jail\n::1 localhost agent-jail\n'
         for h in "${block_hosts[@]}"; do printf '0.0.0.0 %s\n:: %s\n' "$h" "$h"; done
@@ -899,26 +943,59 @@ build_jail() {
     # after the pins above, which bind directories afresh from the host.
     for f in "${hidden[@]}"; do b+=(--ro-bind /dev/null "$f"); done
 
-    # A desktop app talks to the compositor over a Unix socket in the runtime
-    # directory; X11 stays out of reach (its abstract socket is in the host's
-    # network namespace).
-    if ((gui)); then
+    # A desktop app, --wayland, or --blend talks to the compositor over a Unix
+    # socket in the runtime directory; X11 stays out of reach (its abstract
+    # socket is in the host's network namespace).
+    if ((gui || wayland || blend)); then
         local rt=${XDG_RUNTIME_DIR:-/run/user/$(id -u)} wl=${WAYLAND_DISPLAY:-wayland-0}
         [[ $wl == /* ]] || wl=$rt/$wl
-        [[ -S $wl ]] || die "$a_title needs a Wayland session: no socket at $wl"
+        if [[ ! -S $wl ]]; then
+            if ((gui)); then
+                die "$a_title needs a Wayland session: no socket at $wl"
+            elif ((blend)); then
+                die "--blend needs a Wayland session: no socket at $wl"
+            else
+                die "--wayland needs a Wayland session: no socket at $wl"
+            fi
+        fi
         b+=(--perms 0700 --dir "$rt" --ro-bind "$wl" "$rt/wayland-0")
         env+=(XDG_RUNTIME_DIR="$rt" WAYLAND_DISPLAY=wayland-0 XDG_SESSION_TYPE=wayland)
-        for kv in XCURSOR_THEME XCURSOR_SIZE; do
-            [[ -z ${!kv:-} ]] || env+=("$kv=${!kv}")
-        done
-        # Render nodes, and the sysfs entries Mesa reads to find them. Without
-        # them (--gpu off) the app draws in software.
-        if [[ $gpu == on && -e /dev/dri ]]; then
-            b+=(--dev-bind /dev/dri /dev/dri)
-            for p in /sys/dev/char /sys/devices /sys/class/drm; do
-                [[ -e $p ]] && b+=(--ro-bind "$p" "$p")
+        if ((gui)); then
+            for kv in XCURSOR_THEME XCURSOR_SIZE; do
+                [[ -z ${!kv:-} ]] || env+=("$kv=${!kv}")
             done
         fi
+    fi
+
+    # Render nodes (plus NVIDIA device nodes when present) and graphics config.
+    # Enabled by default for desktop apps (gui=1) and --blend, or via --gpu on.
+    if ((gui || gpu_asked || blend)) && [[ $gpu == on && -e /dev/dri ]]; then
+        b+=(--dev-bind /dev/dri /dev/dri)
+        for p in /dev/nvidia[0-9]* /dev/nvidiactl /dev/nvidia-modeset /dev/nvidia-uvm /dev/nvidia-uvm-tools; do
+            [[ -e $p ]] && b+=(--dev-bind "$p" "$p")
+        done
+        for p in /sys/dev/char /sys/devices /sys/class/drm /etc/glvnd /etc/vulkan; do
+            [[ -e $p ]] && b+=(--ro-bind "$p" "$p")
+        done
+        ((gui)) || { [[ -e /etc/fonts ]] && b+=(--ro-bind /etc/fonts /etc/fonts); }
+    fi
+
+    if ((blend)); then
+        blender_bin=$(resolve blender) || die "--blend needs blender on PATH"
+        [[ $blender_bin == /usr/* ]] || b+=(--ro-bind "$blender_bin" "$blender_bin")
+        prepare_blender_config
+        [[ -z $bcfg_ver ]] || b+=(--ro-bind "$state_base/blender-config" "$state_base/blender-config")
+    fi
+
+    if ((${#extra_bins[@]})); then
+        local bdir=/run/agent-jail/bin bname breal
+        b+=(--dir "$bdir")
+        for p in "${extra_bins[@]}"; do
+            bname=${p##*/}
+            breal=$(readlink -e -- "$p")
+            b+=(--ro-bind "$breal" "$breal" --symlink "$breal" "$bdir/$bname")
+        done
+        jail_path=("$bdir" "${jail_path[@]}")
     fi
 
     b+=(
@@ -935,7 +1012,7 @@ build_jail() {
         --setenv HOME "$HOME"
         --setenv USER "${USER:-$(id -un)}"
         --setenv LOGNAME "${USER:-$(id -un)}"
-        --setenv PATH "$(IFS=:; echo "${path[*]}${path[*]:+:}/usr/bin:/bin")"
+        --setenv PATH "$(IFS=:; echo "${jail_path[*]}${jail_path[*]:+:}/usr/bin:/bin")"
         --setenv TERM "${TERM:-xterm-256color}"
         --setenv COLORTERM "${COLORTERM:-truecolor}"
         --setenv LANG "${LANG:-C.UTF-8}"
@@ -961,13 +1038,52 @@ build_jail() {
         b+=(--new-session)
     fi
 
+    inner_cmd=("${cmd[@]}")
+    if ((blend)); then
+        local bstart
+        bstart='import bpy
+def _aj_start_mcp():
+    try:
+        bpy.ops.preferences.addon_enable(module="blender_mcp")
+    except Exception:
+        pass
+    if hasattr(bpy.ops, "blendermcp"):
+        try:
+            bpy.ops.blendermcp.start_server()
+        except Exception:
+            pass
+_aj_start_mcp()
+if not getattr(getattr(bpy.types, "blendermcp_server", None), "running", False):
+    bpy.app.timers.register(lambda: (_aj_start_mcp(), None)[1], first_interval=0.2)'
+        # shellcheck disable=SC2016  # $1/$2/$3/$@ are for the inner sh
+        inner_cmd=(/usr/bin/sh -c '
+            bin=$1 cfg=$2 expr=$3; shift 3
+            if command -v setsid >/dev/null 2>&1; then
+                if [ -n "$cfg" ]; then
+                    setsid env BLENDER_USER_CONFIG="$cfg/config" BLENDER_USER_SCRIPTS="$cfg/scripts" \
+                        "$bin" --python-expr "$expr" </dev/null >/tmp/blender.log 2>&1 &
+                else
+                    setsid "$bin" --python-expr "$expr" </dev/null >/tmp/blender.log 2>&1 &
+                fi
+            else
+                if [ -n "$cfg" ]; then
+                    env BLENDER_USER_CONFIG="$cfg/config" BLENDER_USER_SCRIPTS="$cfg/scripts" \
+                        "$bin" --python-expr "$expr" </dev/null >/tmp/blender.log 2>&1 &
+                else
+                    "$bin" --python-expr "$expr" </dev/null >/tmp/blender.log 2>&1 &
+                fi
+            fi
+            exec "$@"
+        ' agent-jail-blend "$blender_bin" "$bcfg_ver" "$bstart" "${inner_cmd[@]}")
+    fi
+
     if [[ $net == allowlist ]]; then
         # shellcheck disable=SC2016  # $1/$@ are for the inner sh
         run=(bwrap "${b[@]}" -- /usr/bin/sh -c \
              'python3 -I -c "$1" "$2" "$3" && shift 3 && exec "$@"' agent-jail-forwarder \
-             "$(forwarder_py)" "$PROXY_SOCKET" "$PROXY_PORT" "${cmd[@]}")
+             "$(forwarder_py)" "$PROXY_SOCKET" "$PROXY_PORT" "${inner_cmd[@]}")
     else
-        run=(bwrap "${b[@]}" -- "${cmd[@]}")
+        run=(bwrap "${b[@]}" -- "${inner_cmd[@]}")
     fi
     if [[ -n $seccomp_arch ]]; then
         seccomp_filter "$seccomp_arch" >"$tmp/seccomp.bpf"
@@ -981,6 +1097,12 @@ build_jail() {
         pasta=$(find_tool pasta) || die "--net isolated needs pasta (passt package); or choose --net none"
         nft=$(find_tool nft) || die "--net isolated needs nft (nftables) for the egress filter"
         ports=$(IFS=,; echo "${host_ports[*]}")
+        in_ports=(-t none)
+        if ((${#jail_ports[@]})); then
+            in_ports=()
+            "$pasta" --help 2>&1 | grep -q -- '--host-lo-to-ns-lo' && in_ports+=(--host-lo-to-ns-lo)
+            for p in "${jail_ports[@]}"; do in_ports+=(-t "127.0.0.1/$p"); done
+        fi
         # Applied inside the jail's own network namespace, before bwrap starts. Only
         # public addresses are reachable; loopback works for forwarded host ports.
         cat >"$tmp/egress.nft" <<EOF
@@ -1000,7 +1122,7 @@ table inet agent_jail {
 EOF
         # shellcheck disable=SC2016  # $1/$@ are for the inner sh
         run=("$pasta" --config-net --quiet --no-map-gw --dns-forward "$DNS_ADDR"
-             -t none -u none -T "${ports:-none}" -U none --
+             "${in_ports[@]}" -u none -T "${ports:-none}" -U none --
              /usr/bin/sh -c '"$1" -f "$2" && shift 2 && exec "$@"' agent-jail-net
              "$nft" "$tmp/egress.nft" "${run[@]}")
     fi
@@ -1034,7 +1156,7 @@ install_agent() {
     agent_info "$1" || die "$1 is not an installable agent (see --list)"
     [[ $a_pkg ]] || die "$(not_npm)"
     [[ $net != none ]] || die "installing needs the network; leave out --net none"
-    local dest=$tools_dir/$1 new=$tools_dir/.$1.new npm version
+    local dest=$tools_dir/$1 new=$tools_dir/.$1.new npm version wayland=0 blend=0 gpu_asked=0 jail_ports=() host_ports=() extra_bins=()
     npm=$(resolve npm) || die "npm is not installed (needed to install $a_title)"
 
     cmd=() ro_paths=() state=() imports=() env=() path=() block_hosts=() hidden=() gui=0
@@ -1135,7 +1257,8 @@ describe_jail() {
     local n g
     case $net in
         isolated) n="public internet only; not localhost, the LAN or a tailnet"
-                  ((${#host_ports[@]} == 0)) || n+="; host port ${host_ports[*]}" ;;
+                  ((${#host_ports[@]} == 0)) || n+="; host port ${host_ports[*]}"
+                  ((${#jail_ports[@]} == 0)) || n+="; jail port ${jail_ports[*]}" ;;
         allowlist) n=$(printf ', %s' "${allow_hosts[@]}")
                    n="only ${n:2}, over HTTPS" ;;
         none)     n="none" ;;
@@ -1415,7 +1538,7 @@ check_setup() {
 # --- configuration files ------------------------------------------------------
 
 # The options a config file may set: "name=" takes a value, "name" is a switch.
-readonly CONFIG_KEYS=" net= allow-host= host-port= git= ro= hide= show= no-hide seccomp= gpu= memory= tasks= "
+readonly CONFIG_KEYS=" net= allow-host= host-port= jail-port= git= ro= bin= hide= show= no-hide seccomp= gpu= wayland blend memory= tasks= "
 
 # Set cfg_keys, cfg_values and cfg_where (file:line) to the settings in config
 # file $1. Each line is "name = value", or just "name" for a switch; a line
@@ -1542,9 +1665,12 @@ apply_project_config() {
         fi
     fi
     [[ $net == allowlist ]] || allow_hosts=()
-    # Host ports only exist with --net isolated.
+    # Host and jail ports only exist with --net isolated.
     if [[ $net != isolated ]] && ((${#host_ports[@]})); then
         host_ports=() applied+=("no host ports")
+    fi
+    if [[ $net != isolated ]] && ((${#jail_ports[@]})); then
+        jail_ports=() applied+=("no jail ports")
     fi
     if ((${#applied[@]})); then
         x=$(printf ', %s' "${applied[@]}")
@@ -1609,8 +1735,8 @@ if [[ -e $user_config ]]; then
 fi
 
 net=isolated git_mode=protect force=0 dry_run=0 inspect=0 list=0 check=0 install=
-host_ports=() allow_hosts=() extra_ro=() hide_default=1 hide_patterns=() show_patterns=()
-memory=$MEMORY_DEFAULT tasks=$TASKS_DEFAULT limits_asked=0 seccomp=on gpu=on
+host_ports=() jail_ports=() allow_hosts=() extra_ro=() extra_bins=() hide_default=1 hide_patterns=() show_patterns=()
+memory=$MEMORY_DEFAULT tasks=$TASKS_DEFAULT limits_asked=0 seccomp=on gpu=on gpu_asked=0 wayland=0 blend=0
 while (($#)); do
     case $1 in
         --net)        net=${2:?--net needs a mode}; shift 2 ;;
@@ -1619,10 +1745,14 @@ while (($#)); do
         --allow-host=*) allow_hosts+=("${1#*=}"); shift ;;
         --host-port)  host_ports+=("${2:?--host-port needs a port}"); shift 2 ;;
         --host-port=*) host_ports+=("${1#*=}"); shift ;;
+        --jail-port)  jail_ports+=("${2:?--jail-port needs a port}"); shift 2 ;;
+        --jail-port=*) jail_ports+=("${1#*=}"); shift ;;
         --git)        git_mode=${2:?--git needs a mode}; shift 2 ;;
         --git=*)      git_mode=${1#*=}; shift ;;
         --ro)         extra_ro+=("${2:?--ro needs a path}"); shift 2 ;;
         --ro=*)       extra_ro+=("${1#*=}"); shift ;;
+        --bin)        extra_bins+=("${2:?--bin needs a path}"); shift 2 ;;
+        --bin=*)      extra_bins+=("${1#*=}"); shift ;;
         --hide)       hide_patterns+=("${2:?--hide needs a pattern}"); shift 2 ;;
         --hide=*)     hide_patterns+=("${1#*=}"); shift ;;
         --show)       show_patterns+=("${2:?--show needs a pattern}"); shift 2 ;;
@@ -1630,8 +1760,10 @@ while (($#)); do
         --no-hide)    hide_default=0 hide_patterns=(); shift ;;
         --seccomp)    seccomp=${2:?--seccomp needs on or off}; shift 2 ;;
         --seccomp=*)  seccomp=${1#*=}; shift ;;
-        --gpu)        gpu=${2:?--gpu needs on or off}; shift 2 ;;
-        --gpu=*)      gpu=${1#*=}; shift ;;
+        --wayland)    wayland=1; shift ;;
+        --blend)      blend=1; shift ;;
+        --gpu)        gpu=${2:?--gpu needs on or off}; gpu_asked=1; shift 2 ;;
+        --gpu=*)      gpu=${1#*=}; gpu_asked=1; shift ;;
         --print-seccomp)
             seccomp_filter "${2:-$(uname -m)}" || die "no seccomp filter for ${2:-$(uname -m)}"
             exit 0 ;;
@@ -1658,13 +1790,15 @@ case $net in isolated|none|host) ;; *) die "--net must be isolated, none or host
 case $git_mode in protect|ro|off) ;; *) die "--git must be protect, ro or off" ;; esac
 case $seccomp in on|off) ;; *) die "--seccomp must be on or off" ;; esac
 case $gpu in on|off) ;; *) die "--gpu must be on or off" ;; esac
-for p in "${host_ports[@]}"; do
+for p in "${host_ports[@]}" "${jail_ports[@]}"; do
     if ! [[ $p =~ ^[0-9]+$ ]] || ((p < 1 || p > 65535)); then die "bad port: $p"; fi
 done
 ((${#host_ports[@]} == 0)) || [[ $net == isolated ]] || die "--host-port needs --net isolated"
+((${#jail_ports[@]} == 0)) || [[ $net == isolated ]] || die "--jail-port needs --net isolated"
 if ((${#allow_hosts[@]})); then
     [[ $net == isolated ]] || die "--allow-host needs --net isolated"
     ((${#host_ports[@]} == 0)) || die "--allow-host and --host-port can't be used together"
+    ((${#jail_ports[@]} == 0)) || die "--allow-host and --jail-port can't be used together"
     for i in "${!allow_hosts[@]}"; do
         allow_hosts[i]=$(host_entry "${allow_hosts[i]}") ||
             die "bad --allow-host: ${allow_hosts[i]} (a name such as example.com or *.example.com, with an optional :port)"
@@ -1743,6 +1877,11 @@ declare -F "profile_$profile" >/dev/null || die "unknown profile: $profile (see 
 
 for p in "${extra_ro[@]}"; do
     readlink -e -- "$p" >/dev/null || die "no such path for --ro: $p"
+done
+for p in "${extra_bins[@]}"; do
+    [[ -n ${p##*/} && ${p##*/} != . && ${p##*/} != .. ]] || die "--bin needs an executable file: $p"
+    real=$(readlink -e -- "$p") || die "no such path for --bin: $p"
+    [[ -f $real && -x $real ]] || die "--bin needs an executable file: $p"
 done
 
 state_dir=$state_base/$profile

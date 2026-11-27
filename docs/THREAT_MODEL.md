@@ -19,10 +19,10 @@ may be compromised. Assume it actively tries to get out.
 | Your files, while an agent is installed | `--install` and the picker run `npm install` in a jail that can write only the new package directory, with the same network filter. The installed package is read-only to the agent, and its command is refused if it leads outside the install. |
 | Your next `git` command on the host | `.git/hooks`, `.git/config`, `config.worktree`, and those of submodules and worktrees are read-only; `.git` pointer files and `commondir` files are read-only; each `.git` directory and the directories above it are mount points, so a repository can't be moved aside and replaced by a fresh `git init`; new or replaced `.git` entries and new `commondir` files are reported after the run; symlinked hooks/config refuse to start. |
 | Services on the host's loopback (local model servers, web UIs, databases) | Separate network namespace; only ports passed with `--host-port` are forwarded. |
-| Your desktop session (X11, Wayland, D-Bus, PipeWire, systemd user manager) | `/run/user` is not mounted; abstract sockets such as X11's are unreachable from a separate network namespace. |
+| Your desktop session (X11, Wayland, D-Bus, PipeWire, systemd user manager) | `/run/user` is not mounted unless `--wayland` or `chatgpt` is used, which binds only the Wayland socket; abstract sockets such as X11's are unreachable from a separate network namespace. |
 | The LAN, router, tailnet, cloud metadata endpoints | nftables in the jail's namespace rejects 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 (except the DNS forwarder), 127/8, multicast, IPv6 ULA and link-local. |
 | Hosts you didn't list, with `--allow-host` | No network namespace route out; one Unix socket to a host-side proxy that allows `CONNECT` to listed names and ports only, refuses IP literals and names with any non-public address (IPv4-mapped, NAT64 and 6to4 forms included), and connects to the address it checked. |
-| Inbound exposure | pasta's automatic port forwarding (`-t`, `-u`, `-T`, `-U`, all `auto` by default) is set to `none`. |
+| Inbound exposure | pasta's automatic port forwarding (`-t`, `-u`, `-T`, `-U`, all `auto` by default) is set to `none`; only ports passed with `--jail-port` are forwarded on `127.0.0.1`. |
 | Other processes | PID namespace; no capabilities; nested user namespaces disabled (`--disable-userns`). |
 | Your machine's memory and process table | With a systemd user session, the jail and pasta run in a scope with `MemoryMax` (50% of RAM), `MemorySwapMax=0`, `OOMPolicy=continue` and `TasksMax` (4096). The jail's tmpfs `/tmp` and `$HOME` are charged to it. |
 | Your terminal input | A seccomp filter refuses the `TIOCSTI` and `TIOCLINUX` ioctls, comparing only the 32 bits the kernel uses. Without the filter (`--seccomp off`, or not x86_64 or aarch64), the agent is started in a new session if the kernel still allows `TIOCSTI`. |
@@ -80,23 +80,28 @@ Read these before trusting the jail with anything.
 8. **Public addresses of things you own.** Only private ranges are blocked. A LAN
    device with a global IPv6 address, or a host service bound to all interfaces and
    reachable on one of the host's public addresses, can still be reached.
-9. **`--net host`, `--git off`, `--ro`, `--force`, `--no-hide`, `--show`, `--seccomp off`.** Each one removes a protection
+9. **`--net host`, `--git off`, `--ro`, `--bin`, `--force`, `--no-hide`, `--show`, `--seccomp off`, `--wayland`, `--blend`, `--jail-port`.** Each one removes a protection
    on purpose.
 10. **The agents' own sandboxes.** Codex's and Copilot CLI's sandboxes can't run
    inside the jail and start turned off there (see
    [the guide](GUIDE.md#supported-agents)). The jail replaces it, but anything an
    agent's own sandbox would have blocked *inside* the working directory, such as
    writes to particular files, is no longer blocked.
-11. **Desktop apps (the `chatgpt` profile).** The Wayland socket is a direct line
-   to your compositor, and `agent-jail` doesn't narrow it. Whatever the
-   compositor offers every client (clipboard, and, depending on the compositor,
-   screen capture or synthetic keyboard input) is reachable by the app and by
-   anything running inside it. With the GPU on, the render node and a read-only
-   view of `/sys/devices` expose the graphics driver's kernel interface and
-   describe your hardware; `--gpu off` removes both at the cost of software
-   rendering. Chromium's own sandbox is off in the jail, so the jail is the only
-   thing between a compromised web page in the app and everything else. The app
-   also reaches your ChatGPT account over the network by design (see 1).
+11. **Wayland and GPU (`--wayland`, `--blend`, `--gpu on`, and the `chatgpt` profile).** The Wayland socket is a
+   direct line to your compositor, and `agent-jail` doesn't narrow it. Whatever
+   the compositor offers every client (clipboard, and, depending on the
+   compositor, screen capture or synthetic keyboard input) is reachable by the
+   agent and by anything running inside it. On compositors with data-control
+   enabled, any client on the Wayland socket can read the clipboard continuously
+   while the jail runs. `--wayland` exposes only the Wayland socket (no
+   `/dev/dri`, X11 or D-Bus). For `chatgpt`, or any profile with explicit
+   `--gpu on`, the render node (and NVIDIA device nodes when present) and a
+   read-only view of `/sys/devices` expose the graphics driver's kernel
+   interface and describe your hardware; `--gpu off` removes them at the cost of
+   software rendering. Chromium's own sandbox is off in the jail, so the jail
+   is the only thing between a compromised web page in the app and everything
+   else. The app also reaches your ChatGPT account over the network by design
+   (see 1).
 
 ## Verification
 

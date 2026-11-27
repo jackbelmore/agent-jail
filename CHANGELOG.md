@@ -4,6 +4,20 @@
 
 ### Added
 
+- Opt-in `--blend` flag (and `blend` config option): launches Blender inside
+  the jail (Wayland + GPU, sanitized read-only config) with `blender_mcp`
+  auto-started on the jail's private `127.0.0.1:9876`. Ignored with a warning
+  in a project's `.agent-jail`.
+- Opt-in `--bin PATH` flag (and `bin = PATH` config option) to expose an
+  executable read-only and place it on `PATH` (preserving symlink basenames);
+  ignored with a warning in a project's `.agent-jail`.
+- Opt-in `--jail-port PORT` flag to forward `127.0.0.1:PORT` from the host into
+  the jail (useful for running tools like Blender's MCP server inside their own
+  jail), and explicit `--gpu on` support (including NVIDIA device nodes) for
+  non-desktop profiles.
+- Opt-in `--wayland` flag (and `wayland` config option): binds only the Wayland
+  socket (no GPU, X11 or D-Bus) so TUI agents like Codex can paste clipboard
+  images on Wayland. Ignored with a warning in a project's `.agent-jail`.
 - A profile for OpenAI's ChatGPT desktop app (the Codex app): `agent-jail
   chatgpt`. It is the first profile with a window: the jail passes in the
   Wayland socket and, unless you say `--gpu off`, the GPU's render node, and
@@ -77,6 +91,11 @@
 - Git hooks and config were writable when the project directory itself was
   named `venv`, `target` or `node_modules`, because the search for `.git`
   skipped it as a dependency tree.
+- `agent-jail codex` could stop at "Background server has incompatible feature
+  settings". Codex's background app server updates itself into the jail's
+  `~/.codex/packages`, so it got newer than the read-only Codex that starts it.
+  The jail now runs Codex with `-c features.daemon_auto_start=false`, which
+  keeps the server inside the Codex process.
 
 ## 0.2.0 (2026-10-22)
 
